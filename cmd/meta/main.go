@@ -1,20 +1,32 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
+
+	"github.com/enriquefft/meta-cli/internal/cli"
+	"github.com/enriquefft/meta-cli/internal/config"
+	"github.com/enriquefft/meta-cli/internal/graph"
 )
 
 var version = "dev"
 
 func main() {
-	args := os.Args[1:]
-	if len(args) > 0 && (args[0] == "--version" || args[0] == "-v") {
-		fmt.Printf("meta version %s\n", version)
-		os.Exit(0)
+	cli.Version = version
+
+	store := config.NewStore("")
+
+	cfg, err := store.Load()
+	if err != nil {
+		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "meta — CLI and MCP server for the Meta Marketing API\n")
-	fmt.Fprintf(os.Stderr, "Run 'meta --help' for usage.\n")
-	os.Exit(0)
+	graphClient := graph.NewClient(graph.ClientConfig{
+		AccessToken: cfg.AccessToken,
+		APIVersion:  cfg.APIVersion,
+	})
+
+	if err := cli.Execute(context.Background(), store, graphClient); err != nil {
+		os.Exit(1)
+	}
 }
