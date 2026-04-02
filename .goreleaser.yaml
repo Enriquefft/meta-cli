@@ -99,25 +99,26 @@ release:
     **Full Changelog**: https://github.com/enriquefft/meta-cli/compare/{{.PreviousTag}}...{{.Tag}}
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Homebrew Cask (uncomment to enable)
-# Requires a homebrew tap repository at github.com/enriquefft/homebrew-tap
+# Homebrew Formula (uncomment to enable)
+# Requires: 1) github.com/enriquefft/homebrew-tap repo
+#           2) HOMEBREW_TAP_TOKEN secret with repo write access
+# Install: brew install enriquefft/tap/meta
 # ──────────────────────────────────────────────────────────────────────────────
-# homebrew_casks:
+# brews:
 #   - name: meta
 #     repository:
 #       owner: enriquefft
 #       name: homebrew-tap
 #       branch: main
 #       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-#     directory: Casks
+#     directory: Formula
 #     homepage: "https://github.com/enriquefft/meta-cli"
-#     description: "CLI tool for interacting with Meta (Facebook) Graph API"
-#     hooks:
-#       post:
-#         install: |
-#           if OS.mac?
-#             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/meta"]
-#           end
+#     description: "CLI and MCP server for the Meta Marketing API"
+#     license: "MIT"
+#     install: |
+#       bin.install "meta"
+#     test: |
+#       assert_match version.to_s, shell_output("#{bin}/meta --version")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Nix (uncomment to enable)
