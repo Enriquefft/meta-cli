@@ -34,9 +34,10 @@ func NewTargetingCommand(deps *Dependencies) *cobra.Command {
 			ctx := cmd.Context()
 
 			result, err := meta.SearchTargeting(ctx, deps.Client, meta.SearchTargetingParams{
-				Type:  searchType,
-				Query: query,
-				Limit: limit,
+				AccountID: deps.Config.DefaultAccount,
+				Type:      searchType,
+				Query:     query,
+				Limit:     limit,
 			})
 			if err != nil {
 				_ = output.PrintError(cmd.ErrOrStderr(), err)

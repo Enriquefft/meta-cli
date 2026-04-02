@@ -87,10 +87,10 @@ func createCampaignTool() mcplib.Tool {
 			mcplib.Enum("OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT", "OUTCOME_AWARENESS", "OUTCOME_LEADS", "OUTCOME_APP_PROMOTION"),
 		),
 		mcplib.WithNumber("daily_budget",
-			mcplib.Description("Daily budget in dollars (e.g. 50.00 = $50)"),
+			mcplib.Description("Daily budget in dollars (e.g. 50.00 = $50). Mutually exclusive with lifetime_budget; at least one is required."),
 		),
 		mcplib.WithNumber("lifetime_budget",
-			mcplib.Description("Lifetime budget in dollars (e.g. 500.00 = $500)"),
+			mcplib.Description("Lifetime budget in dollars (e.g. 500.00 = $500). Mutually exclusive with daily_budget; at least one is required."),
 		),
 		mcplib.WithString("bid_strategy",
 			mcplib.Description("Bid strategy"),
@@ -156,15 +156,15 @@ func createAdSetTool() mcplib.Tool {
 			mcplib.Items(map[string]any{"type": "number"}),
 		),
 		mcplib.WithArray("interests",
-			mcplib.Description("Interest IDs for targeting"),
+			mcplib.Description("Interest IDs for targeting (use meta_search_targeting with type 'interests' to find IDs)"),
 			mcplib.Items(map[string]any{"type": "string"}),
 		),
 		mcplib.WithArray("behaviors",
-			mcplib.Description("Behavior IDs for targeting"),
+			mcplib.Description("Behavior IDs for targeting (use meta_search_targeting with type 'behaviors' to find IDs)"),
 			mcplib.Items(map[string]any{"type": "string"}),
 		),
 		mcplib.WithArray("custom_audiences",
-			mcplib.Description("Custom audience IDs"),
+			mcplib.Description("Custom audience IDs from the ad account"),
 			mcplib.Items(map[string]any{"type": "string"}),
 		),
 		mcplib.WithArray("excluded_countries",
@@ -186,6 +186,9 @@ func createAdSetTool() mcplib.Tool {
 		),
 		mcplib.WithString("end_time",
 			mcplib.Description("Ad set end time (ISO 8601)"),
+		),
+		mcplib.WithBoolean("advantage_audience",
+			mcplib.Description("Enable Advantage+ audience expansion (default: false, uses explicit targeting)"),
 		),
 		mcplib.WithString("status",
 			mcplib.Description("Initial ad set status"),
@@ -212,10 +215,10 @@ func createCreativeTool() mcplib.Tool {
 			mcplib.Description("Video ID from meta_upload_video"),
 		),
 		mcplib.WithString("image_hash",
-			mcplib.Description("Hash of a previously uploaded image"),
+			mcplib.Description("Hash of a previously uploaded image. For video ads, used as thumbnail."),
 		),
 		mcplib.WithString("image_url",
-			mcplib.Description("URL of an image to use"),
+			mcplib.Description("URL of an image. For video ads, used as thumbnail (required by Meta for video creatives)."),
 		),
 		mcplib.WithString("message",
 			mcplib.Description("Ad copy / body text"),
@@ -270,6 +273,10 @@ func createAdTool() mcplib.Tool {
 func searchTargetingTool() mcplib.Tool {
 	return mcplib.NewTool("meta_search_targeting",
 		mcplib.WithDescription("Search for targeting options (interests, behaviors, demographics, etc.)."),
+		mcplib.WithString("account_id",
+			mcplib.Description("The ad account ID"),
+			mcplib.Required(),
+		),
 		mcplib.WithString("type",
 			mcplib.Description("Type of targeting to search"),
 			mcplib.Required(),
@@ -470,6 +477,7 @@ func handleCreateAdSet(client meta.Client) toolHandler {
 			CustomEventType:    request.GetString("custom_event_type", ""),
 			StartTime:          request.GetString("start_time", ""),
 			EndTime:            request.GetString("end_time", ""),
+			AdvantageAudience:  request.GetBool("advantage_audience", false),
 			Status:             request.GetString("status", "PAUSED"),
 		}
 
@@ -584,6 +592,10 @@ func handleCreateAd(client meta.Client) toolHandler {
 
 func handleSearchTargeting(client meta.Client) toolHandler {
 	return func(ctx context.Context, request mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+		accountID, err := request.RequireString("account_id")
+		if err != nil {
+			return mcplib.NewToolResultError(err.Error()), nil
+		}
 		targetingType, err := request.RequireString("type")
 		if err != nil {
 			return mcplib.NewToolResultError(err.Error()), nil
@@ -594,9 +606,10 @@ func handleSearchTargeting(client meta.Client) toolHandler {
 		}
 
 		result, err := meta.SearchTargeting(ctx, client, meta.SearchTargetingParams{
-			Type:  targetingType,
-			Query: query,
-			Limit: request.GetInt("limit", 25),
+			AccountID: accountID,
+			Type:      targetingType,
+			Query:     query,
+			Limit:     request.GetInt("limit", 25),
 		})
 		if err != nil {
 			return mcplib.NewToolResultError(err.Error()), nil

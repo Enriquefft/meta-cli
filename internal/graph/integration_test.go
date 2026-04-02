@@ -90,14 +90,19 @@ func TestIntegration_SearchTargeting(t *testing.T) {
 	client, _ := testClient(t)
 	ctx := context.Background()
 
+	account := os.Getenv("META_AD_ACCOUNT")
+	if account == "" {
+		t.Skip("META_AD_ACCOUNT not set")
+	}
+
 	result, err := meta.SearchTargeting(ctx, client, meta.SearchTargetingParams{
-		Type:  "interests",
-		Query: "technology",
-		Limit: 5,
+		AccountID: account,
+		Type:      "interests",
+		Query:     "technology",
+		Limit:     5,
 	})
 	if err != nil {
-		// The /search endpoint is restricted in sandbox environments.
-		t.Skipf("SearchTargeting not available in sandbox: %v", err)
+		t.Skipf("SearchTargeting not available: %v", err)
 	}
 	if len(result.Data) == 0 {
 		t.Fatal("expected at least one targeting suggestion")

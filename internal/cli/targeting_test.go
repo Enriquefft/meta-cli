@@ -12,8 +12,8 @@ import (
 func TestTargetingCommand_Success(t *testing.T) {
 	mc := &mockClient{}
 	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
-		if path != "/search" {
-			t.Errorf("expected path /search, got %q", path)
+		if path != "/act_123456/targetingsearch" {
+			t.Errorf("expected path /act_123456/targetingsearch, got %q", path)
 		}
 		if params.Get("type") != "interests" {
 			t.Errorf("expected type interests, got %q", params.Get("type"))

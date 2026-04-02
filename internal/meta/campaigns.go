@@ -67,7 +67,7 @@ func CreateCampaign(ctx context.Context, client Client, params CreateCampaignPar
 
 	if params.DailyBudgetCents > 0 {
 		body["daily_budget"] = strconv.FormatInt(params.DailyBudgetCents, 10)
-	} else {
+	} else if params.LifetimeBudgetCents > 0 {
 		body["lifetime_budget"] = strconv.FormatInt(params.LifetimeBudgetCents, 10)
 	}
 

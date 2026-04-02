@@ -12,8 +12,8 @@ import (
 func TestSearchTargeting_Success(t *testing.T) {
 	mock := &MockClient{
 		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
-			if path != "/search" {
-				t.Errorf("expected path /search, got %s", path)
+			if path != "/act_123/targetingsearch" {
+				t.Errorf("expected path /act_123/targetingsearch, got %s", path)
 			}
 			if params.Get("type") != "interests" {
 				t.Errorf("expected type interests, got %s", params.Get("type"))
@@ -50,9 +50,10 @@ func TestSearchTargeting_Success(t *testing.T) {
 	}
 
 	result, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-		Type:  "interests",
-		Query: "e-commerce",
-		Limit: 10,
+		AccountID: "act_123",
+		Type:      "interests",
+		Query:     "e-commerce",
+		Limit:     10,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -101,8 +102,9 @@ func TestSearchTargeting_EmptyResults(t *testing.T) {
 	}
 
 	result, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-		Type:  "interests",
-		Query: "xyznonexistent",
+		AccountID: "act_123",
+		Type:      "interests",
+		Query:     "xyznonexistent",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -129,8 +131,9 @@ func TestSearchTargeting_DefaultLimit(t *testing.T) {
 	}
 
 	_, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-		Type:  "interests",
-		Query: "test",
+		AccountID: "act_123",
+		Type:      "interests",
+		Query:     "test",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -145,7 +148,8 @@ func TestSearchTargeting_MissingType(t *testing.T) {
 	mock := &MockClient{}
 
 	_, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-		Query: "test",
+		AccountID: "act_123",
+		Query:     "test",
 	})
 	if err == nil {
 		t.Fatal("expected validation error for missing Type")
@@ -159,8 +163,9 @@ func TestSearchTargeting_InvalidType(t *testing.T) {
 	mock := &MockClient{}
 
 	_, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-		Type:  "invalid_type",
-		Query: "test",
+		AccountID: "act_123",
+		Type:      "invalid_type",
+		Query:     "test",
 	})
 	if err == nil {
 		t.Fatal("expected validation error for invalid Type")
@@ -177,7 +182,8 @@ func TestSearchTargeting_MissingQuery(t *testing.T) {
 	mock := &MockClient{}
 
 	_, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-		Type: "interests",
+		AccountID: "act_123",
+		Type:      "interests",
 	})
 	if err == nil {
 		t.Fatal("expected validation error for missing Query")
@@ -195,8 +201,9 @@ func TestSearchTargeting_ClientError(t *testing.T) {
 	}
 
 	_, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-		Type:  "interests",
-		Query: "test",
+		AccountID: "act_123",
+		Type:      "interests",
+		Query:     "test",
 	})
 	if err == nil {
 		t.Fatal("expected error to be propagated")
@@ -232,8 +239,9 @@ func TestSearchTargeting_AllValidTypes(t *testing.T) {
 			}
 
 			_, err := SearchTargeting(context.Background(), mock, SearchTargetingParams{
-				Type:  typ,
-				Query: "test",
+				AccountID: "act_123",
+				Type:      typ,
+				Query:     "test",
 			})
 			if err != nil {
 				t.Fatalf("unexpected error for valid type %s: %v", typ, err)

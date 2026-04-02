@@ -30,6 +30,7 @@ type CreateAdSetParams struct {
 	CustomEventType     string
 	StartTime           string
 	EndTime             string
+	AdvantageAudience   bool   // default: false (explicit targeting)
 	Status              string // default: PAUSED
 }
 
@@ -172,6 +173,14 @@ func buildTargetingSpec(params CreateAdSetParams) (string, error) {
 
 	if len(params.PublisherPlatforms) > 0 {
 		targeting["publisher_platforms"] = params.PublisherPlatforms
+	}
+
+	advantageFlag := 0
+	if params.AdvantageAudience {
+		advantageFlag = 1
+	}
+	targeting["targeting_automation"] = map[string]interface{}{
+		"advantage_audience": advantageFlag,
 	}
 
 	b, err := json.Marshal(targeting)

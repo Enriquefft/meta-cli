@@ -30,6 +30,7 @@ func NewAdSetsCommand(deps *Dependencies) *cobra.Command {
 	var customEventType string
 	var startTime string
 	var endTime string
+	var advantageAudience bool
 	var status string
 
 	cmd := &cobra.Command{
@@ -118,6 +119,7 @@ func NewAdSetsCommand(deps *Dependencies) *cobra.Command {
 				CustomEventType:     customEventType,
 				StartTime:           startTime,
 				EndTime:             endTime,
+				AdvantageAudience:   advantageAudience,
 				Status:              status,
 			})
 			if err != nil {
@@ -155,6 +157,7 @@ func NewAdSetsCommand(deps *Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&customEventType, "custom-event-type", "", "Custom event type for pixel")
 	cmd.Flags().StringVar(&startTime, "start-time", "", "Start time (ISO 8601)")
 	cmd.Flags().StringVar(&endTime, "end-time", "", "End time (ISO 8601)")
+	cmd.Flags().BoolVar(&advantageAudience, "advantage-audience", false, "Enable Advantage+ audience expansion")
 	cmd.Flags().StringVar(&status, "status", "PAUSED", "Initial ad set status (default: PAUSED)")
 
 	return cmd

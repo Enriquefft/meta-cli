@@ -23,9 +23,10 @@ const defaultTargetingLimit = 25
 
 // SearchTargetingParams contains the parameters for searching targeting options.
 type SearchTargetingParams struct {
-	Type  string
-	Query string
-	Limit int
+	AccountID string
+	Type      string
+	Query     string
+	Limit     int
 }
 
 // TargetingSuggestion represents a single targeting option returned by the API.
@@ -45,6 +46,9 @@ type SearchTargetingResult struct {
 
 // SearchTargeting searches for targeting options (interests, behaviors, demographics, etc.).
 func SearchTargeting(ctx context.Context, client Client, params SearchTargetingParams) (*SearchTargetingResult, error) {
+	if params.AccountID == "" {
+		return nil, fmt.Errorf("validation: AccountID is required")
+	}
 	if params.Type == "" {
 		return nil, fmt.Errorf("validation: Type is required")
 	}
@@ -60,12 +64,15 @@ func SearchTargeting(ctx context.Context, client Client, params SearchTargetingP
 		limit = defaultTargetingLimit
 	}
 
+	accountID := normalizeAccountID(params.AccountID)
+	path := "/act_" + accountID + "/targetingsearch"
+
 	queryParams := url.Values{}
 	queryParams.Set("type", params.Type)
 	queryParams.Set("q", params.Query)
 	queryParams.Set("limit", strconv.Itoa(limit))
 
-	resp, err := client.Get(ctx, "/search", queryParams)
+	resp, err := client.Get(ctx, path, queryParams)
 	if err != nil {
 		return nil, err
 	}

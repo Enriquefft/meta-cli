@@ -88,6 +88,11 @@ func buildObjectStorySpec(params CreateCreativeParams, cta string) (string, erro
 			"message":        params.Message,
 			"call_to_action": callToAction,
 		}
+		if params.ImageHash != "" {
+			videoData["image_hash"] = params.ImageHash
+		} else if params.ImageURL != "" {
+			videoData["image_url"] = params.ImageURL
+		}
 		if params.Headline != "" {
 			videoData["title"] = params.Headline
 		}

@@ -192,9 +192,10 @@ func TestHandleSearchTargeting(t *testing.T) {
 
 	handler := handleSearchTargeting(mc)
 	result, err := callTool(context.Background(), handler, map[string]any{
-		"type":  "interests",
-		"query": "e-commerce",
-		"limit": float64(25),
+		"account_id": "act_123",
+		"type":       "interests",
+		"query":      "e-commerce",
+		"limit":      float64(25),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
