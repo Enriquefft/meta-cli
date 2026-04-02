@@ -1,0 +1,46 @@
+# Lefthook git hooks configuration
+# Docs: https://github.com/evilmartians/lefthook/blob/master/docs/configuration.md
+
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      run: just lint
+
+    test:
+      run: just test
+
+commit-msg:
+  commands:
+    conventional-commits:
+      run: |
+        msg="$(cat {1})"
+        # Allow merge commits and revert commits to pass through
+        if echo "$msg" | grep -qE '^(Merge |Revert )'; then
+          exit 0
+        fi
+        # Validate conventional commit format: type(scope)?: description
+        # First line only, max 72 chars, lower-case subject
+        first_line="$(echo "$msg" | head -n1)"
+        if [ ${#first_line} -gt 72 ]; then
+          echo "ERROR: commit header exceeds 72 characters (${#first_line} chars)"
+          echo "  $first_line"
+          exit 1
+        fi
+        if ! echo "$first_line" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._-]+\))?!?: [a-z].+$'; then
+          echo "ERROR: invalid commit message format"
+          echo "  $first_line"
+          echo ""
+          echo "Expected: type(scope)?: description"
+          echo "  types:   feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+          echo "  scope:   optional, lower-case alphanumeric with . _ - separators"
+          echo "  !:       optional breaking change marker"
+          echo "  subject: lower-case, non-empty"
+          echo "  max length: 72 characters"
+          echo ""
+          echo "Examples:"
+          echo "  feat(graph): add upload video support"
+          echo "  fix: resolve nil pointer in config loader"
+          echo "  refactor(cli)!: redesign command structure"
+          exit 1
+        fi

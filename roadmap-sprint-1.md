@@ -266,3 +266,124 @@ Phase 0 (scaffold)
 | No Meta SDK | Raw `net/http` | REST/JSON API. SDK = indirection without value. |
 | TDD | Types → tests → impl → integration | Every line of implementation justified by a test first. |
 | Integration tests | `//go:build integration` + real API | Live token validates against real Meta API. Not CI-dependent. |
+
+---
+
+## Integration Test Completion Phases (Full Finish)
+
+This section splits the remaining implementation and hardening work to fully finish integration testing for the core flow:
+
+1. Upload downloaded video to ad account
+2. Create campaign → ad set → creative → ad
+3. Apply audience targeting (country, age, interests)
+4. Link creative CTA to product landing page / store
+
+### Current baseline
+
+- Domain/transport integration exists in `internal/graph/integration_test.go`, including a full pipeline test.
+- CLI/MCP layers do not yet have equivalent live integration coverage for the full pipeline.
+- Several CLI test files need stabilization before the suite can be treated as reliable.
+
+### Phase 1 — Stabilize test suite correctness
+
+**Purpose**: Ensure test files are structurally valid and aligned with current command constructors.
+
+**Implementation scope**:
+- Repair malformed CLI test files (syntax, imports, function names, helper calls).
+- Align tests to exported constructors (`NewCampaignsCommand`, `NewCreativesCommand`, etc.).
+- Remove dead/duplicated fragments and keep one canonical test per command behavior.
+
+**Exit criteria**:
+- CLI test package compiles cleanly.
+- No broken/duplicate test files remain.
+
+### Phase 2 — Shared integration harness
+
+**Purpose**: Create one reusable, deterministic foundation for live integration tests.
+
+**Implementation scope**:
+- Add shared helpers for required env vars, unique resource naming, and polling with bounded timeout.
+- Standardize test preflight checks (token/account/page availability, required permissions).
+- Add consistent skip behavior for sandbox-restricted endpoints.
+
+**Exit criteria**:
+- All integration tests use common helpers (no copy-pasted setup logic).
+- Polling/retry behavior is centralized and bounded.
+
+### Phase 3 — Harden domain-level pipeline integration
+
+**Purpose**: Make the existing domain/graph live pipeline test production-grade and less brittle.
+
+**Implementation scope**:
+- Keep the end-to-end domain test for upload → campaign → adset → creative → ad.
+- Replace brittle assumptions where possible (resource selection and targeting setup).
+- Explicitly assert targeting payload outcomes (country/age/interests) and creative link fields.
+
+**Exit criteria**:
+- Domain integration validates all required flow attributes, not just resource IDs.
+- Test output clearly shows each pipeline step and failure point.
+
+### Phase 4 — Add CLI live integration pipeline
+
+**Purpose**: Prove the user-facing CLI can run the same full workflow end-to-end.
+
+**Implementation scope**:
+- Add `//go:build integration` CLI tests that execute command flow using real credentials.
+- Verify command outputs are parseable and chain IDs between steps.
+- Assert CTA link and targeting values are correctly propagated through CLI flags.
+
+**Exit criteria**:
+- One CLI integration test covers full flow with real API calls.
+- CLI path verifies upload, campaign, adset targeting, creative link, and final ad creation.
+
+### Phase 5 — Add MCP live integration pipeline
+
+**Purpose**: Validate the same business flow through MCP tools, not only direct domain calls.
+
+**Implementation scope**:
+- Add live integration tests for the MCP tool handlers in pipeline sequence.
+- Verify tool input/output contracts for account/video/campaign/adset/creative/ad chaining.
+- Confirm targeting and destination link are preserved through MCP argument mapping.
+
+**Exit criteria**:
+- One MCP integration test covers the complete flow and passes with live env.
+- Tool-level contract assertions exist for key fields (targeting + link + IDs).
+
+### Phase 6 — Cleanup and resource lifecycle guarantees
+
+**Purpose**: Prevent account pollution and make repeated runs safe.
+
+**Implementation scope**:
+- Add deterministic cleanup for test-created resources where API allows it.
+- Ensure cleanup runs on both success and failure paths.
+- Prefix and tag all test assets for discoverability.
+
+**Exit criteria**:
+- Integration runs leave no orphaned campaigns/adsets/ads in normal execution.
+- Failed runs are still easy to clean up due to deterministic naming/tagging.
+
+### Phase 7 — Negative-path and resilience coverage
+
+**Purpose**: Validate failure handling for realistic integration failures.
+
+**Implementation scope**:
+- Add live/near-live cases for invalid targeting, invalid landing URL, and media-not-ready creative creation.
+- Verify surfaced errors remain structured and actionable.
+- Cover permission/sandbox constraints with explicit assertions or skip semantics.
+
+**Exit criteria**:
+- Core failure modes are tested and produce expected error classification.
+- No silent failures in pipeline orchestration.
+
+### Phase 8 — Continuous verification gates
+
+**Purpose**: Make integration quality persistent, not one-off.
+
+**Implementation scope**:
+- Define canonical commands for local and CI live runs (`-tags=integration` subsets).
+- Document required env matrix and account prerequisites for contributors.
+- Add gating policy: unit always, integration on controlled triggers/environments.
+
+**Exit criteria**:
+- Team has one documented, repeatable way to run the full integration suite.
+- Integration regressions are detectable before release.

@@ -46,7 +46,7 @@ Three deep modules. Two thin shells. Strict dependency direction — no upward i
 | `internal/cli/` | `internal/meta/`, `internal/config/`, `internal/output/` |
 | `internal/mcp/` | `internal/meta/`, `internal/config/`, `internal/output/` |
 | `internal/meta/` | `internal/config/` (for defaults only, never directly) — no other internal imports |
-| `internal/graph/` | Nothing internal. Only stdlib + `net/http`. |
+| `internal/graph/` | `internal/meta/` (for interface conformance only) — only stdlib + `net/http` otherwise. |
 | `internal/config/` | Nothing internal. |
 | `internal/output/` | Nothing internal. |
 
@@ -86,10 +86,11 @@ type Client interface {
     Paginate(ctx context.Context, path string, params url.Values) *PageIterator
 }
 
-// PageIterator yields pages of results.
-// Call Next() until it returns false.
+// PageIterator yields pages of results using cursor-based pagination.
+// Call Next() until it returns false, then check Err().
 type PageIterator struct { /* unexported fields */ }
 
+func NewPageIterator(client Client, path string, params url.Values) *PageIterator
 func (it *PageIterator) Next(ctx context.Context) bool
 func (it *PageIterator) Page() (*Response, error)
 func (it *PageIterator) Err() error
@@ -120,7 +121,14 @@ const (
     ExitNetworkError = 5
 )
 
-// ClassifyError maps a GraphError to an exit code.
+func (e *GraphError) Error() string
+
+// ParseGraphError extracts a GraphError from a JSON response body.
+// Returns nil if the body doesn't contain an error.
+func ParseGraphError(body []byte) *GraphError
+
+// ClassifyError maps an error to an exit code.
+// Checks for net.Error (network), *GraphError (API), or defaults to ExitAPIError.
 func ClassifyError(err error) int
 ```
 
@@ -149,8 +157,8 @@ func Xxx(ctx context.Context, client Client, params XxxParams) (*XxxResult, erro
 
 ```go
 // DollarsToCents converts a dollar amount to cents.
-// $50.00 → 5000. Panics on negative values (callers validate first).
-func DollarsToCents(d float64) int64
+// $50.00 → 5000. Returns error on negative, NaN, or Inf values.
+func DollarsToCents(d float64) (int64, error)
 ```
 
 ---
@@ -203,7 +211,8 @@ Pattern:
 //go:build integration
 
 func TestAuthStatusLive(t *testing.T) {
-    cfg := config.Load()
+    store := config.NewStore("")
+    cfg, _ := store.Load()
     client := graph.NewClient(cfg)
     result, err := meta.AuthStatus(context.Background(), client)
     require.NoError(t, err)
@@ -239,12 +248,13 @@ Types live with their operation. No shared model packages.
 
 | File | Lines | Responsibility |
 |------|-------|---------------|
-| `internal/graph/client.go` | ~200 | HTTP client: auth, versioning, timeout, retry, logging |
-| `internal/graph/errors.go` | ~80 | Parse Meta error JSON → `GraphError` |
-| `internal/graph/pagination.go` | ~100 | Cursor-based page iterator |
-| `internal/graph/upload.go` | ~120 | Multipart upload + resumable for >1GB |
-| `internal/graph/rate.go` | ~80 | Rate limit header parsing + backoff |
-| `internal/config/config.go` | ~150 | Load, resolve, get, set, validate |
+| `internal/graph/client.go` | ~290 | HTTP client: auth, versioning, timeout, retry, rate-aware backoff, logging |
+| `internal/graph/errors.go` | ~30 | Check HTTP response → `GraphError`, retryable status classification |
+| `internal/graph/upload.go` | ~320 | Multipart upload (simple + resumable for >1GB with chunked transfer) |
+| `internal/graph/rate.go` | ~90 | Rate limit header parsing, backoff calculation, retry config |
+| `internal/config/config.go` | ~175 | Load, resolve (env > file > default), get, set, validate |
+| `internal/meta/client.go` | ~100 | Client interface, Response, PageIterator (cursor-based) |
+| `internal/meta/errors.go` | ~75 | GraphError, exit codes, ClassifyError, DollarsToCents |
 | `internal/output/output.go` | ~150 | JSON/table/csv formatting + field filter + error output |
 | `internal/meta/*.go` (9 files) | ~50-100 each | Domain operations + types |
 | `internal/cli/*.go` (14 files) | ~30-80 each | Flag parsing → domain call → print |
@@ -266,7 +276,9 @@ No global state. No init functions. No singletons.
 
 ```go
 func main() {
-    cfg := config.Load()
+    store := config.NewStore("")
+    cfg, err := store.Load()
+    // handle err
     client := graph.NewClient(cfg)
     // wire client into cobra commands / MCP server
 }

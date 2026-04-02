@@ -27,6 +27,7 @@
             golangci-lint
             goreleaser
             lefthook
+            just
           ];
 
           shellHook = ''

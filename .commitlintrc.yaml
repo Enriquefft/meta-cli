@@ -1,0 +1,29 @@
+# Conventional Commits configuration
+# This file documents the project's commit message conventions.
+# Actual enforcement is handled by the commit-msg hook in lefthook.yml
+# using a Go-native regex approach (no Node.js runtime required).
+#
+# Reference: https://www.conventionalcommits.org/en/v1.0.0/
+
+types:
+  - feat
+  - fix
+  - docs
+  - style
+  - refactor
+  - perf
+  - test
+  - build
+  - ci
+  - chore
+  - revert
+
+rules:
+  header-max-length: 72
+  type-empty:
+    - never
+  subject-empty:
+    - never
+  subject-case:
+    - always
+    - lower-case

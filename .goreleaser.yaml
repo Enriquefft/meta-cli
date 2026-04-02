@@ -1,0 +1,135 @@
+# GoReleaser configuration for meta-cli
+# https://goreleaser.com/intro/
+
+version: 2
+
+project_name: meta-cli
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: meta
+    main: ./cmd/meta
+    binary: meta
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    formats: [ tar.gz ]
+    format_overrides:
+      - goos: windows
+        formats: [ zip ]
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  - id: default
+    artifacts: archive
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^ci:"
+      - "^chore:"
+      - "^docs:"
+      - "^style:"
+      - "^test:"
+      - "^build:"
+      - "merge conflict"
+      - "Merge pull request"
+      - "Merge remote-tracking branch"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Performance Improvements
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Refactoring
+      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: enriquefft
+    name: meta-cli
+  mode: replace
+  draft: false
+  replace_existing_draft: true
+  header: |
+    ## meta-cli {{.Tag}}
+  footer: |
+    **Full Changelog**: https://github.com/enriquefft/meta-cli/compare/{{.PreviousTag}}...{{.Tag}}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Homebrew Cask (uncomment to enable)
+# Requires a homebrew tap repository at github.com/enriquefft/homebrew-tap
+# ──────────────────────────────────────────────────────────────────────────────
+# homebrew_casks:
+#   - name: meta
+#     repository:
+#       owner: enriquefft
+#       name: homebrew-tap
+#       branch: main
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     directory: Casks
+#     homepage: "https://github.com/enriquefft/meta-cli"
+#     description: "CLI tool for interacting with Meta (Facebook) Graph API"
+#     hooks:
+#       post:
+#         install: |
+#           if OS.mac?
+#             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/meta"]
+#           end
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Nix (uncomment to enable)
+# ──────────────────────────────────────────────────────────────────────────────
+# nix:
+#   - name: meta
+#     repository:
+#       owner: enriquefft
+#       name: nixpkgs
+#       branch: main
+#       token: "{{ .Env.NIX_PUBLISH_TOKEN }}"
+#     homepage: "https://github.com/enriquefft/meta-cli"
+#     description: "CLI tool for interacting with Meta (Facebook) Graph API"
+#     license: "mit"
+#     path: pkgs/meta-cli/default.nix
