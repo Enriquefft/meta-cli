@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 5m
 
@@ -9,12 +11,17 @@ linters:
     - unused
     - ineffassign
     - misspell
+
+formatters:
+  enable:
     - gofmt
     - goimports
 
 linters-settings:
   govet:
     enable-all: true
+
+formatters-settings:
   gofmt:
     simplify: true
 
