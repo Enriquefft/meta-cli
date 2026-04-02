@@ -88,17 +88,11 @@ func printTable(w io.Writer, data any, fields string) error {
 
 	headers := rows[0]
 	dataRows := rows[1:]
-	noColor := isNoColor()
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 
-	// Write header
-	if noColor {
-		_, err = fmt.Fprintln(tw, strings.Join(headers, "\t"))
-	} else {
-		_, err = fmt.Fprintln(tw, strings.Join(headers, "\t"))
-	}
-	if err != nil {
+	// Write header (color support to be added when charmbracelet/lipgloss is integrated).
+	if _, err = fmt.Fprintln(tw, strings.Join(headers, "\t")); err != nil {
 		return err
 	}
 
@@ -295,8 +289,8 @@ func formatValue(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// isNoColor returns true when the NO_COLOR environment variable is set.
-func isNoColor() bool {
+// IsNoColor returns true when the NO_COLOR environment variable is set.
+func IsNoColor() bool {
 	_, set := os.LookupEnv("NO_COLOR")
 	return set
 }
