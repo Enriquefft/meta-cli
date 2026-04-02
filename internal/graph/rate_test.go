@@ -17,9 +17,6 @@ func TestParseRateLimit_ValidHeader(t *testing.T) {
 	if rl.Usage != 80 {
 		t.Errorf("expected Usage 80, got %d", rl.Usage)
 	}
-	if rl.CallCount != 80 {
-		t.Errorf("expected CallCount 80, got %d", rl.CallCount)
-	}
 	if rl.TotalCPUTime != 50 {
 		t.Errorf("expected TotalCPUTime 50, got %d", rl.TotalCPUTime)
 	}
@@ -73,9 +70,6 @@ func TestParseRateLimit_MultipleAccounts(t *testing.T) {
 	}
 	if rl.Usage != 90 {
 		t.Errorf("expected Usage 90 (max across accounts), got %d", rl.Usage)
-	}
-	if rl.CallCount != 90 {
-		t.Errorf("expected CallCount 90, got %d", rl.CallCount)
 	}
 	if rl.TotalCPUTime != 70 {
 		t.Errorf("expected TotalCPUTime 70 (max), got %d", rl.TotalCPUTime)
@@ -160,6 +154,23 @@ func TestDelayForAttempt_CapsAt30(t *testing.T) {
 	d50 := cfg.DelayForAttempt(50)
 	if d30 != d50 {
 		t.Errorf("expected attempt 50 capped to same as 30, got %v vs %v", d50, d30)
+	}
+	if d30 != maxBackoff {
+		t.Errorf("expected capped delay %v, got %v", maxBackoff, d30)
+	}
+}
+
+func TestDelayForAttempt_CappedAtMaxBackoff(t *testing.T) {
+	cfg := RetryConfig{BaseDelay: 1 * time.Second}
+	// attempt 5 = 32s which equals maxBackoff
+	d5 := cfg.DelayForAttempt(5)
+	if d5 != maxBackoff {
+		t.Errorf("expected DelayForAttempt(5) = %v, got %v", maxBackoff, d5)
+	}
+	// attempt 10 would be 1024s without cap, must be 32s
+	d10 := cfg.DelayForAttempt(10)
+	if d10 != maxBackoff {
+		t.Errorf("expected DelayForAttempt(10) capped to %v, got %v", maxBackoff, d10)
 	}
 }
 

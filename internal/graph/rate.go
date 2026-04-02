@@ -2,13 +2,13 @@ package graph
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 )
 
 type RateLimit struct {
 	Usage                int
-	CallCount            int
 	TotalTime            int
 	TotalCPUTime         int
 	EstimatedTimeToReset int
@@ -43,9 +43,6 @@ func ParseRateLimit(header http.Header) *RateLimit {
 			if e.TotalTime > rl.TotalTime {
 				rl.TotalTime = e.TotalTime
 			}
-			if e.CallCount > rl.CallCount {
-				rl.CallCount = e.CallCount
-			}
 			if e.EstimatedTimeToReset > rl.EstimatedTimeToReset {
 				rl.EstimatedTimeToReset = e.EstimatedTimeToReset
 			}
@@ -78,10 +75,16 @@ func DefaultRetryConfig() RetryConfig {
 	}
 }
 
+const maxBackoff = 32 * time.Second
+
 func (r RetryConfig) DelayForAttempt(attempt int) time.Duration {
 	if attempt > 30 {
 		attempt = 30
 	}
-	secs := r.BaseDelay.Seconds() * float64(uint(1)<<attempt)
-	return time.Duration(secs * float64(time.Second))
+	secs := r.BaseDelay.Seconds() * math.Pow(2, float64(attempt))
+	delay := time.Duration(secs * float64(time.Second))
+	if delay > maxBackoff {
+		delay = maxBackoff
+	}
+	return delay
 }

@@ -16,6 +16,7 @@ import (
 
 const resumableThreshold int64 = 1 << 30
 const chunkSize = 4 << 20
+const maxUploadIterations = 10_000
 
 func (c *Client) Upload(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*meta.Response, error) {
 	p := make(map[string]string, len(params)+1)
@@ -34,6 +35,8 @@ func (c *Client) Upload(ctx context.Context, path string, file io.Reader, filena
 }
 
 func (c *Client) simpleUpload(ctx context.Context, path string, file io.Reader, filename string, params map[string]string) (*meta.Response, error) {
+	c.preRequestBackoff(ctx)
+
 	r, w := io.Pipe()
 	mpW := multipart.NewWriter(w)
 
@@ -83,6 +86,8 @@ func (c *Client) simpleUpload(ctx context.Context, path string, file io.Reader, 
 		return nil, fmt.Errorf("reading upload response: %w", err)
 	}
 
+	c.updateRateLimit(resp.Header)
+
 	result := &meta.Response{
 		Body:       body,
 		StatusCode: resp.StatusCode,
@@ -109,28 +114,25 @@ type finishUploadResponse struct {
 }
 
 func (c *Client) startUploadSession(ctx context.Context, path string, params map[string]string) (*uploadSessionResponse, error) {
+	c.preRequestBackoff(ctx)
+
 	form := url.Values{}
 	for k, v := range params {
 		form.Set(k, v)
 	}
 	form.Set("upload_phase", "start")
+	encoded := form.Encode()
 
-	u := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
+	resp, body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, strings.NewReader(encoded))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("creating start session request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing start session: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
-		return nil, fmt.Errorf("reading start session response: %w", err)
+		return nil, fmt.Errorf("start session: %w", err)
 	}
 
 	if resp.StatusCode >= 300 {
@@ -153,6 +155,8 @@ var chunkBufPool = sync.Pool{
 }
 
 func (c *Client) transferChunk(ctx context.Context, path string, sessionID string, file io.ReaderAt, offset int64, accessToken string) (string, error) {
+	c.preRequestBackoff(ctx)
+
 	bufPtr := chunkBufPool.Get().(*[]byte)
 	defer chunkBufPool.Put(bufPtr)
 	buf := *bufPtr
@@ -217,6 +221,8 @@ func (c *Client) transferChunk(ctx context.Context, path string, sessionID strin
 		return "", fmt.Errorf("reading transfer response: %w", err)
 	}
 
+	c.updateRateLimit(resp.Header)
+
 	if resp.StatusCode >= 300 {
 		return "", fmt.Errorf("transfer failed (HTTP %d): %s", resp.StatusCode, body)
 	}
@@ -233,29 +239,26 @@ func (c *Client) transferChunk(ctx context.Context, path string, sessionID strin
 }
 
 func (c *Client) finishUpload(ctx context.Context, path string, sessionID string, params map[string]string) (*finishUploadResponse, error) {
+	c.preRequestBackoff(ctx)
+
 	form := url.Values{}
 	for k, v := range params {
 		form.Set(k, v)
 	}
 	form.Set("upload_phase", "finish")
 	form.Set("upload_session_id", sessionID)
+	encoded := form.Encode()
 
-	u := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
+	resp, body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, strings.NewReader(encoded))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("creating finish request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing finish: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-	if err != nil {
-		return nil, fmt.Errorf("reading finish response: %w", err)
+		return nil, fmt.Errorf("finish upload: %w", err)
 	}
 
 	if resp.StatusCode >= 300 {
@@ -280,24 +283,38 @@ func (c *Client) resumableUpload(ctx context.Context, path string, file io.Reade
 	}
 
 	var offset int64
-	for offset < size {
+	for i := 0; offset < size; i++ {
+		if i >= maxUploadIterations {
+			return nil, fmt.Errorf("upload exceeded maximum iterations (%d) at offset %d/%d: possible server-side stall", maxUploadIterations, offset, size)
+		}
+
 		nextOffset, err := c.transferChunk(ctx, path, session.VideoUploadSessionID, file, offset, params["access_token"])
 		if err != nil {
 			return nil, fmt.Errorf("transferring chunk at offset %d: %w", offset, err)
 		}
+
+		var newOffset int64
 		if nextOffset == "" {
-			offset += int64(chunkSize)
+			newOffset = offset + int64(chunkSize)
 		} else {
 			var parsed int64
 			if _, err := fmt.Sscanf(nextOffset, "%d", &parsed); err != nil {
 				return nil, fmt.Errorf("invalid start_offset %q from API: %w", nextOffset, err)
 			}
 			if parsed <= offset {
-				offset += int64(chunkSize)
+				newOffset = offset + int64(chunkSize)
 			} else {
-				offset = parsed
+				newOffset = parsed
 			}
 		}
+
+		if newOffset <= offset {
+			return nil, fmt.Errorf("upload stalled: offset did not advance at %d (API returned non-progressing offset)", offset)
+		}
+		if newOffset > size+int64(chunkSize) {
+			return nil, fmt.Errorf("upload offset %d exceeds file size %d by more than one chunk", newOffset, size)
+		}
+		offset = newOffset
 	}
 
 	fin, err := c.finishUpload(ctx, path, session.VideoUploadSessionID, params)

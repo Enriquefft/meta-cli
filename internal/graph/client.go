@@ -168,7 +168,7 @@ func (c *Client) Get(ctx context.Context, path string, params url.Values) (*meta
 	}
 
 	if c.verbose {
-		slog.Info("response", "status", resp.StatusCode, "body", string(body))
+		slog.Info("response", "status", resp.StatusCode, "body", truncateForLog(body, 500))
 	}
 
 	result := &meta.Response{
@@ -221,7 +221,7 @@ func (c *Client) Post(ctx context.Context, path string, params map[string]string
 	}
 
 	if c.verbose {
-		slog.Info("response", "status", resp.StatusCode, "body", string(body))
+		slog.Info("response", "status", resp.StatusCode, "body", truncateForLog(body, 500))
 	}
 
 	result := &meta.Response{
@@ -263,6 +263,14 @@ func redactParams(encoded string) string {
 		vals.Set("access_token", "REDACTED")
 	}
 	return vals.Encode()
+}
+
+func truncateForLog(body []byte, maxLen int) string {
+	s := string(body)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + fmt.Sprintf("... (%d bytes truncated)", len(s)-maxLen)
 }
 
 func isRetryableNetError(err error) bool {
