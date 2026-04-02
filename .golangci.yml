@@ -16,14 +16,6 @@ formatters:
   enable:
     - gofmt
     - goimports
-
-linters-settings:
-  govet:
-    enable-all: true
-
-formatters-settings:
-  gofmt:
-    simplify: true
-
-issues:
-  exclude-use-default: false
+  settings:
+    gofmt:
+      simplify: true
