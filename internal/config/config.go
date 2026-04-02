@@ -158,86 +158,19 @@ func (s *ConfigStore) persist() error {
 		return err
 	}
 	tmpName := f.Name()
-	f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
 
 	if err := s.v.WriteConfigAs(tmpName); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return err
 	}
 
 	if err := os.Rename(tmpName, s.configPath); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return err
 	}
 
 	return nil
-}
-
-var (
-	defaultStore   *ConfigStore
-	defaultStoreMu sync.RWMutex
-	defaultCfgPath string
-)
-
-func SetConfigPath(p string) {
-	defaultStoreMu.Lock()
-	defaultCfgPath = p
-	defaultStore = nil
-	defaultStoreMu.Unlock()
-}
-
-func ConfigPath() string {
-	defaultStoreMu.RLock()
-	p := defaultCfgPath
-	defaultStoreMu.RUnlock()
-	if p == "" {
-		return DefaultConfigPath()
-	}
-	return p
-}
-
-func Reset() {
-	defaultStoreMu.Lock()
-	defaultStore = nil
-	defaultStoreMu.Unlock()
-}
-
-func getDefaultStore() *ConfigStore {
-	defaultStoreMu.RLock()
-	s := defaultStore
-	defaultStoreMu.RUnlock()
-	if s != nil {
-		return s
-	}
-
-	defaultStoreMu.Lock()
-	defer defaultStoreMu.Unlock()
-
-	if defaultStore != nil {
-		return defaultStore
-	}
-
-	path := defaultCfgPath
-	if path == "" {
-		path = DefaultConfigPath()
-	}
-
-	defaultStore = NewStore(path)
-	return defaultStore
-}
-
-func Load() (*Config, error) {
-	return getDefaultStore().Load()
-}
-
-func Get(key string) string {
-	return getDefaultStore().Get(key)
-}
-
-func Set(key, value string) error {
-	return getDefaultStore().Set(key, value)
-}
-
-func Validate(c *Config) error {
-	return getDefaultStore().Validate(c)
 }

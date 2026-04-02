@@ -15,17 +15,21 @@ func unsetMetaEnvs(t *testing.T) {
 		"META_API_VERSION",
 	} {
 		t.Setenv(key, "")
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 	}
 }
 
-func TestLoadDefaults(t *testing.T) {
-	Reset()
+func newTestStore(t *testing.T) *ConfigStore {
+	t.Helper()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
-	SetConfigPath(filepath.Join(tmp, "config.yaml"))
+	return NewStore(filepath.Join(tmp, "config.yaml"))
+}
 
-	cfg, err := Load()
+func TestLoadDefaults(t *testing.T) {
+	s := newTestStore(t)
+
+	cfg, err := s.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -42,17 +46,14 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadFromEnv(t *testing.T) {
-	Reset()
-	unsetMetaEnvs(t)
-	tmp := t.TempDir()
-	SetConfigPath(filepath.Join(tmp, "config.yaml"))
+	s := newTestStore(t)
 
 	t.Setenv("META_ACCESS_TOKEN", "test-token")
 	t.Setenv("META_APP_ID", "test-app-id")
 	t.Setenv("META_API_VERSION", "v20.0")
 	t.Setenv("META_AD_ACCOUNT", "act_999")
 
-	cfg, err := Load()
+	cfg, err := s.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -72,7 +73,6 @@ func TestLoadFromEnv(t *testing.T) {
 }
 
 func TestLoadFromFile(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
 	cfgFile := filepath.Join(tmp, "config.yaml")
@@ -81,9 +81,9 @@ func TestLoadFromFile(t *testing.T) {
 	if err := os.WriteFile(cfgFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	SetConfigPath(cfgFile)
 
-	cfg, err := Load()
+	s := NewStore(cfgFile)
+	cfg, err := s.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -100,7 +100,6 @@ func TestLoadFromFile(t *testing.T) {
 }
 
 func TestEnvOverridesFile(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
 	cfgFile := filepath.Join(tmp, "config.yaml")
@@ -109,11 +108,11 @@ func TestEnvOverridesFile(t *testing.T) {
 	if err := os.WriteFile(cfgFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	SetConfigPath(cfgFile)
 
 	t.Setenv("META_ACCESS_TOKEN", "env-token")
 
-	cfg, err := Load()
+	s := NewStore(cfgFile)
+	cfg, err := s.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -127,26 +126,27 @@ func TestEnvOverridesFile(t *testing.T) {
 }
 
 func TestSetAndGet(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
-	SetConfigPath(filepath.Join(tmp, "config.yaml"))
-	Load()
+	cfgFile := filepath.Join(tmp, "config.yaml")
+	s := NewStore(cfgFile)
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
 
-	err := Set("default_account", "act_789")
+	err := s.Set("default_account", "act_789")
 	if err != nil {
 		t.Fatalf("Set failed: %v", err)
 	}
 
-	val := Get("default_account")
+	val := s.Get("default_account")
 	if val != "act_789" {
 		t.Errorf("Get returned %s, want act_789", val)
 	}
 
-	Reset()
-	unsetMetaEnvs(t)
-	SetConfigPath(filepath.Join(tmp, "config.yaml"))
-	cfg, err := Load()
+	// Reload from disk to verify persistence
+	s2 := NewStore(cfgFile)
+	cfg, err := s2.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -157,26 +157,28 @@ func TestSetAndGet(t *testing.T) {
 }
 
 func TestSetAndGet_METAAdAccount(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
-	SetConfigPath(filepath.Join(tmp, "config.yaml"))
-	Load()
+	cfgFile := filepath.Join(tmp, "config.yaml")
+	s := NewStore(cfgFile)
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
 
-	err := Set("default_account", "act_persisted")
+	err := s.Set("default_account", "act_persisted")
 	if err != nil {
 		t.Fatalf("Set failed: %v", err)
 	}
 
-	val := Get("default_account")
+	val := s.Get("default_account")
 	if val != "act_persisted" {
 		t.Errorf("Get returned %s, want act_persisted", val)
 	}
 
-	Reset()
+	// Env should override persisted value on a fresh store
 	t.Setenv("META_AD_ACCOUNT", "act_from_env")
-	SetConfigPath(filepath.Join(tmp, "config.yaml"))
-	cfg, err := Load()
+	s2 := NewStore(cfgFile)
+	cfg, err := s2.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -187,41 +189,45 @@ func TestSetAndGet_METAAdAccount(t *testing.T) {
 }
 
 func TestValidate_MissingToken(t *testing.T) {
+	s := newTestStore(t)
 	cfg := &Config{}
-	err := Validate(cfg)
+	err := s.Validate(cfg)
 	if err == nil {
 		t.Error("expected error for missing access_token")
 	}
 }
 
 func TestValidate_InvalidOutputFormat(t *testing.T) {
+	s := newTestStore(t)
 	cfg := &Config{
 		AccessToken:  "valid-token",
 		APIVersion:   "v21.0",
 		OutputFormat: "xml",
 	}
-	err := Validate(cfg)
+	err := s.Validate(cfg)
 	if err == nil {
 		t.Error("expected error for invalid output_format")
 	}
 }
 
 func TestValidate_Valid(t *testing.T) {
+	s := newTestStore(t)
 	cfg := &Config{AccessToken: "valid-token", APIVersion: "v21.0"}
-	err := Validate(cfg)
+	err := s.Validate(cfg)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestSetCreatesDirectory(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
-	SetConfigPath(filepath.Join(tmp, "sub", "dir", "config.yaml"))
-	Load()
+	s := NewStore(filepath.Join(tmp, "sub", "dir", "config.yaml"))
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
 
-	err := Set("access_token", "nested-token")
+	err := s.Set("access_token", "nested-token")
 	if err != nil {
 		t.Fatalf("Set failed with nested dirs: %v", err)
 	}
@@ -232,7 +238,6 @@ func TestSetCreatesDirectory(t *testing.T) {
 }
 
 func TestMalformedYAML(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
 	cfgFile := filepath.Join(tmp, "config.yaml")
@@ -241,16 +246,15 @@ func TestMalformedYAML(t *testing.T) {
 	if err := os.WriteFile(cfgFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	SetConfigPath(cfgFile)
 
-	_, err := Load()
+	s := NewStore(cfgFile)
+	_, err := s.Load()
 	if err == nil {
 		t.Error("expected error for malformed YAML")
 	}
 }
 
 func TestEmptyConfigFile(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
 	cfgFile := filepath.Join(tmp, "config.yaml")
@@ -258,9 +262,9 @@ func TestEmptyConfigFile(t *testing.T) {
 	if err := os.WriteFile(cfgFile, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	SetConfigPath(cfgFile)
 
-	cfg, err := Load()
+	s := NewStore(cfgFile)
+	cfg, err := s.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -274,7 +278,6 @@ func TestEmptyConfigFile(t *testing.T) {
 }
 
 func TestMETAAdAccountOverridesFile(t *testing.T) {
-	Reset()
 	unsetMetaEnvs(t)
 	tmp := t.TempDir()
 	cfgFile := filepath.Join(tmp, "config.yaml")
@@ -283,11 +286,11 @@ func TestMETAAdAccountOverridesFile(t *testing.T) {
 	if err := os.WriteFile(cfgFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	SetConfigPath(cfgFile)
 
 	t.Setenv("META_AD_ACCOUNT", "act_from_env")
 
-	cfg, err := Load()
+	s := NewStore(cfgFile)
+	cfg, err := s.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
