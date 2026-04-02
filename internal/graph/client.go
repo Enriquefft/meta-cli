@@ -30,6 +30,7 @@ type Client struct {
 	dryRun     bool
 	verbose    bool
 	retry      RetryConfig
+	backoffFn  func(usage int) time.Duration
 
 	rateMu    sync.Mutex
 	rateLimit *RateLimit
@@ -42,6 +43,7 @@ func NewClient(cfg ClientConfig) *Client {
 		baseURL:    baseURL,
 		token:      cfg.AccessToken,
 		retry:      DefaultRetryConfig(),
+		backoffFn:  BackoffDuration,
 	}
 }
 
@@ -57,7 +59,7 @@ func (c *Client) preRequestBackoff(ctx context.Context) {
 		return
 	}
 
-	backoff := BackoffDuration(rl.Usage)
+	backoff := c.backoffFn(rl.Usage)
 	if backoff <= 0 {
 		return
 	}
@@ -80,23 +82,12 @@ func (c *Client) updateRateLimit(header http.Header) {
 	}
 }
 
-func (c *Client) Get(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
-	c.preRequestBackoff(ctx)
+type requestFactory func() (*http.Request, error)
 
-	if params == nil {
-		params = url.Values{}
-	}
-	params.Set("access_token", c.token)
-
-	u := c.baseURL + path + "?" + params.Encode()
-
-	if c.verbose {
-		slog.Info("GET", "url", redactURL(u))
-	}
-
+func (c *Client) doWithRetry(ctx context.Context, factory requestFactory) (*http.Response, []byte, error) {
 	var resp *http.Response
 	var body []byte
-	var err error
+	var lastErr error
 
 	for attempt := 0; attempt <= c.retry.MaxRetries; attempt++ {
 		if attempt > 0 {
@@ -106,29 +97,29 @@ func (c *Client) Get(ctx context.Context, path string, params url.Values) (*meta
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			case <-time.After(delay):
 			}
 		}
 
-		var req *http.Request
-		req, err = http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		req, err := factory()
 		if err != nil {
-			return nil, fmt.Errorf("creating request: %w", err)
+			return nil, nil, fmt.Errorf("creating request: %w", err)
 		}
 
 		resp, err = c.httpClient.Do(req)
 		if err != nil {
+			lastErr = err
 			if isRetryableNetError(err) {
 				continue
 			}
-			return nil, fmt.Errorf("executing request: %w", err)
+			return nil, nil, fmt.Errorf("executing request: %w", err)
 		}
 
 		body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("reading response: %w", err)
+			return nil, nil, fmt.Errorf("reading response: %w", err)
 		}
 
 		c.updateRateLimit(resp.Header)
@@ -136,6 +127,44 @@ func (c *Client) Get(ctx context.Context, path string, params url.Values) (*meta
 		if !IsRetryableHTTP(resp.StatusCode) {
 			break
 		}
+	}
+
+	if resp == nil {
+		return nil, nil, fmt.Errorf("request failed after %d retries: %w", c.retry.MaxRetries, lastErr)
+	}
+
+	if IsRetryableHTTP(resp.StatusCode) {
+		return resp, body, fmt.Errorf("request failed with HTTP %d after %d retries", resp.StatusCode, c.retry.MaxRetries)
+	}
+
+	return resp, body, nil
+}
+
+func (c *Client) Get(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
+	c.preRequestBackoff(ctx)
+
+	if params == nil {
+		params = url.Values{}
+	} else {
+		copied := make(url.Values, len(params))
+		for k, v := range params {
+			copied[k] = append([]string(nil), v...)
+		}
+		params = copied
+	}
+	params.Set("access_token", c.token)
+
+	u := c.baseURL + path + "?" + params.Encode()
+
+	if c.verbose {
+		slog.Info("GET", "url", redactURL(u))
+	}
+
+	resp, body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if c.verbose {
@@ -179,46 +208,16 @@ func (c *Client) Post(ctx context.Context, path string, params map[string]string
 		slog.Info("POST", "url", u, "params", redactParams(form.Encode()))
 	}
 
-	var resp *http.Response
-	var body []byte
-	var err error
-
-	for attempt := 0; attempt <= c.retry.MaxRetries; attempt++ {
-		if attempt > 0 {
-			delay := c.retry.DelayForAttempt(attempt - 1)
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-
-		var req *http.Request
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
+	resp, body, err := c.doWithRetry(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
 		if err != nil {
-			return nil, fmt.Errorf("creating request: %w", err)
+			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-		resp, err = c.httpClient.Do(req)
-		if err != nil {
-			if isRetryableNetError(err) {
-				continue
-			}
-			return nil, fmt.Errorf("executing request: %w", err)
-		}
-
-		body, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("reading response: %w", err)
-		}
-
-		c.updateRateLimit(resp.Header)
-
-		if !IsRetryableHTTP(resp.StatusCode) {
-			break
-		}
+		return req, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if c.verbose {
@@ -239,7 +238,7 @@ func (c *Client) Post(ctx context.Context, path string, params map[string]string
 }
 
 func (c *Client) Paginate(ctx context.Context, path string, params url.Values) *meta.PageIterator {
-	return meta.NewPageIterator(c, ctx, path, params)
+	return meta.NewPageIterator(c, path, params)
 }
 
 func redactURL(u string) string {
@@ -282,7 +281,7 @@ func isRetryableNetError(err error) bool {
 
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return true
+		return netErr.Timeout()
 	}
 
 	return false

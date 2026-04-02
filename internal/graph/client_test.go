@@ -27,7 +27,7 @@ func TestGet_IncludesAccessToken(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		gotToken = r.URL.Query().Get("access_token")
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"me"}`))
+		_, _ = w.Write([]byte(`{"id":"me"}`))
 	})
 	defer srv.Close()
 
@@ -52,7 +52,7 @@ func TestGet_PassesParams(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		gotFields = r.URL.Query().Get("fields")
 		w.WriteHeader(200)
-		w.Write([]byte(`{"data":[]}`))
+		_, _ = w.Write([]byte(`{"data":[]}`))
 	})
 	defer srv.Close()
 
@@ -69,10 +69,10 @@ func TestGet_PassesParams(t *testing.T) {
 func TestPost_IncludesAccessToken(t *testing.T) {
 	var gotToken string
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		gotToken = r.FormValue("access_token")
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"123"}`))
+		_, _ = w.Write([]byte(`{"id":"123"}`))
 	})
 	defer srv.Close()
 
@@ -88,10 +88,10 @@ func TestPost_IncludesAccessToken(t *testing.T) {
 func TestPost_DryRunInjectsValidateOnly(t *testing.T) {
 	var gotExec string
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		gotExec = r.FormValue("execution_options")
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"123"}`))
+		_, _ = w.Write([]byte(`{"id":"123"}`))
 	})
 	defer srv.Close()
 
@@ -108,7 +108,7 @@ func TestPost_DryRunInjectsValidateOnly(t *testing.T) {
 func TestPost_ReturnsResponse(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"120212345678901234"}`))
+		_, _ = w.Write([]byte(`{"id":"120212345678901234"}`))
 	})
 	defer srv.Close()
 
@@ -132,7 +132,7 @@ func TestPost_ReturnsResponse(t *testing.T) {
 func TestGet_APIError(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
-		w.Write([]byte(`{"error":{"message":"Invalid token","type":"OAuthException","code":190,"error_subcode":467}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"Invalid token","type":"OAuthException","code":190,"error_subcode":467}}`))
 	})
 	defer srv.Close()
 
@@ -150,17 +150,17 @@ func TestUpload_Multipart(t *testing.T) {
 	var gotContentType string
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		gotContentType = r.Header.Get("Content-Type")
-		r.ParseMultipartForm(10 << 20)
+		_ = r.ParseMultipartForm(10 << 20)
 		file, hdr, err := r.FormFile("source")
 		if err != nil {
 			t.Errorf("failed to get source file: %v", err)
 			w.WriteHeader(500)
 			return
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		gotFilename = hdr.Filename
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"vid123"}`))
+		_, _ = w.Write([]byte(`{"id":"vid123"}`))
 	})
 	defer srv.Close()
 
@@ -183,11 +183,11 @@ func TestUpload_Multipart(t *testing.T) {
 func TestUpload_PassesParams(t *testing.T) {
 	var gotTitle string
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseMultipartForm(10 << 20)
+		_ = r.ParseMultipartForm(10 << 20)
 		gotTitle = r.FormValue("title")
 		_, _, _ = r.FormFile("source")
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"vid123"}`))
+		_, _ = w.Write([]byte(`{"id":"vid123"}`))
 	})
 	defer srv.Close()
 
@@ -205,7 +205,7 @@ func TestUpload_PassesParams(t *testing.T) {
 func TestGet_CancelledContext(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	})
 	defer srv.Close()
 
@@ -228,7 +228,7 @@ func TestNewClient_SetsBaseURL(t *testing.T) {
 func TestPaginate_ReturnsIterator(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte(`{"data":[{"id":"1"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"1"}]}`))
 	})
 	defer srv.Close()
 
@@ -244,11 +244,11 @@ func TestGet_RetriesOn500(t *testing.T) {
 		calls++
 		if calls < 3 {
 			w.WriteHeader(500)
-			w.Write([]byte(`{"error":{"message":"temp","type":"OAuthException","code":1}}`))
+			_, _ = w.Write([]byte(`{"error":{"message":"temp","type":"OAuthException","code":1}}`))
 			return
 		}
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"me"}`))
+		_, _ = w.Write([]byte(`{"id":"me"}`))
 	})
 	defer srv.Close()
 
@@ -271,11 +271,11 @@ func TestGet_RetriesOn429(t *testing.T) {
 		calls++
 		if calls < 2 {
 			w.WriteHeader(429)
-			w.Write([]byte(`{"error":{"message":"rate limited","type":"OAuthException","code":17}}`))
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limited","type":"OAuthException","code":17}}`))
 			return
 		}
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"me"}`))
+		_, _ = w.Write([]byte(`{"id":"me"}`))
 	})
 	defer srv.Close()
 
@@ -295,11 +295,11 @@ func TestPost_RetriesOn502(t *testing.T) {
 		calls++
 		if calls < 2 {
 			w.WriteHeader(502)
-			w.Write([]byte(`bad gateway`))
+			_, _ = w.Write([]byte(`bad gateway`))
 			return
 		}
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"123"}`))
+		_, _ = w.Write([]byte(`{"id":"123"}`))
 	})
 	defer srv.Close()
 
@@ -316,7 +316,7 @@ func TestPost_RetriesOn502(t *testing.T) {
 func TestPost_DoesNotMutateCallerParams(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"123"}`))
+		_, _ = w.Write([]byte(`{"id":"123"}`))
 	})
 	defer srv.Close()
 
@@ -372,7 +372,7 @@ func TestPost_NoRetryOnAuthError(t *testing.T) {
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		w.WriteHeader(401)
-		w.Write([]byte(`{"error":{"message":"Invalid token","type":"OAuthException","code":190,"error_subcode":467}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"Invalid token","type":"OAuthException","code":190,"error_subcode":467}}`))
 	})
 	defer srv.Close()
 
@@ -387,24 +387,36 @@ func TestPost_NoRetryOnAuthError(t *testing.T) {
 }
 
 func TestGet_RateLimitBackoff(t *testing.T) {
-	start := time.Now()
 	calls := 0
 	srv, client := newTestClientServer(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if calls == 1 {
-			w.Header().Set("X-Business-Use-Case-Usage", `{"acc":{"call_count":80,"total_cputime":50,"total_time":60,"estimated_time_to_reset":300}}`)
+			w.Header().Set("X-Business-Use-Case-Usage", `{"acc":[{"call_count":80,"total_cputime":50,"total_time":60,"estimated_time_to_reset":300}]}`)
 		}
 		w.WriteHeader(200)
-		w.Write([]byte(`{"id":"me"}`))
+		_, _ = w.Write([]byte(`{"id":"me"}`))
 	})
 	defer srv.Close()
+
+	backoffCalled := false
+	client.backoffFn = func(usage int) time.Duration {
+		backoffCalled = true
+		if usage < 75 {
+			t.Errorf("expected usage >= 75, got %d", usage)
+		}
+		return 1 * time.Millisecond
+	}
 
 	_, err := client.Get(context.Background(), "/me", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	elapsed := time.Since(start)
-	if elapsed < 9*time.Second {
-		t.Errorf("expected backoff delay for usage >= 75, elapsed: %v", elapsed)
+
+	_, err = client.Get(context.Background(), "/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !backoffCalled {
+		t.Error("expected backoff function to be called on second request")
 	}
 }

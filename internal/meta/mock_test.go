@@ -11,6 +11,8 @@ type MockClient struct {
 	PostFn     func(ctx context.Context, path string, params map[string]string) (*Response, error)
 	UploadFn   func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error)
 	PaginateFn func(ctx context.Context, path string, params url.Values) *PageIterator
+	DryRun     bool
+	Verbose    bool
 }
 
 var _ Client = (*MockClient)(nil)
@@ -42,3 +44,6 @@ func (m *MockClient) Paginate(ctx context.Context, path string, params url.Value
 	}
 	return m.PaginateFn(ctx, path, params)
 }
+
+func (m *MockClient) SetDryRun(v bool)  { m.DryRun = v }
+func (m *MockClient) SetVerbose(v bool) { m.Verbose = v }

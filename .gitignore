@@ -19,3 +19,9 @@ dist/
 
 # Go
 vendor/
+
+# Test fixtures
+*.mp4
+
+# Built binary
+/meta

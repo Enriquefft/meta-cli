@@ -20,6 +20,8 @@ type Client interface {
 	Post(ctx context.Context, path string, params map[string]string) (*Response, error)
 	Upload(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error)
 	Paginate(ctx context.Context, path string, params url.Values) *PageIterator
+	SetDryRun(v bool)
+	SetVerbose(v bool)
 }
 
 type PageIterator struct {
@@ -29,10 +31,12 @@ type PageIterator struct {
 	current *Response
 	err     error
 	hasNext bool
-	nextURL string
 }
 
-func NewPageIterator(client Client, ctx context.Context, path string, params url.Values) *PageIterator {
+func NewPageIterator(client Client, path string, params url.Values) *PageIterator {
+	if params == nil {
+		params = url.Values{}
+	}
 	return &PageIterator{
 		client:  client,
 		path:    path,
@@ -46,16 +50,7 @@ func (it *PageIterator) Next(ctx context.Context) bool {
 		return false
 	}
 
-	var resp *Response
-	var err error
-
-	if it.nextURL != "" {
-		u, _ := url.Parse(it.nextURL)
-		resp, err = it.client.Get(ctx, it.path, u.Query())
-	} else {
-		resp, err = it.client.Get(ctx, it.path, it.params)
-	}
-
+	resp, err := it.client.Get(ctx, it.path, it.params)
 	if err != nil {
 		it.err = err
 		it.hasNext = false
@@ -66,15 +61,32 @@ func (it *PageIterator) Next(ctx context.Context) bool {
 
 	var page struct {
 		Paging struct {
+			Cursors struct {
+				Before string `json:"before"`
+				After  string `json:"after"`
+			} `json:"cursors"`
 			Next string `json:"next"`
 		} `json:"paging"`
 	}
-	if json.Unmarshal(resp.Body, &page) == nil && page.Paging.Next != "" {
-		it.nextURL = page.Paging.Next
-		it.hasNext = true
-	} else {
+	if json.Unmarshal(resp.Body, &page) != nil || page.Paging.Cursors.After == "" {
 		it.hasNext = false
+		return true
 	}
+
+	if page.Paging.Next == "" {
+		it.hasNext = false
+		return true
+	}
+
+	nextParams := make(url.Values, len(it.params))
+	for k, v := range it.params {
+		if k != "after" {
+			nextParams[k] = v
+		}
+	}
+	nextParams.Set("after", page.Paging.Cursors.After)
+	it.params = nextParams
+	it.hasNext = true
 
 	return true
 }
