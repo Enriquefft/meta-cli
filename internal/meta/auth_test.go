@@ -19,6 +19,9 @@ func TestAuthStatus_Success(t *testing.T) {
 			case "/me/permissions":
 				body := `{"data":[{"permission":"ads_management","status":"granted"},{"permission":"ads_read","status":"granted"},{"permission":"email","status":"declined"}]}`
 				return &Response{Body: []byte(body), StatusCode: http.StatusOK}, nil
+			case "/debug_token":
+				body := `{"data":{"app_id":"app_1","application":"TestApp","expires_at":1713139200,"scopes":"ads_management,ads_read"}}`
+				return &Response{Body: []byte(body), StatusCode: http.StatusOK}, nil
 			default:
 				t.Fatalf("unexpected path: %s", path)
 				return nil, nil
@@ -47,6 +50,18 @@ func TestAuthStatus_Success(t *testing.T) {
 	}
 	if result.Permissions[1] != "ads_read" {
 		t.Errorf("expected second permission 'ads_read', got %q", result.Permissions[1])
+	}
+	if result.App.ID != "app_1" {
+		t.Errorf("expected app ID 'app_1', got %q", result.App.ID)
+	}
+	if result.App.Name != "TestApp" {
+		t.Errorf("expected app name 'TestApp', got %q", result.App.Name)
+	}
+	if result.ExpiresAt != "1713139200" {
+		t.Errorf("expected expires_at '1713139200', got %q", result.ExpiresAt)
+	}
+	if len(result.Scopes) != 2 || result.Scopes[0] != "ads_management" || result.Scopes[1] != "ads_read" {
+		t.Errorf("expected scopes [ads_management, ads_read], got %v", result.Scopes)
 	}
 }
 
@@ -157,6 +172,8 @@ func TestAuthStatus_MixedPermissions(t *testing.T) {
 			case "/me/permissions":
 				body := `{"data":[{"permission":"ads_management","status":"granted"},{"permission":"email","status":"declined"},{"permission":"ads_read","status":"granted"},{"permission":"pages_read","status":"expired"}]}`
 				return &Response{Body: []byte(body), StatusCode: http.StatusOK}, nil
+			case "/debug_token":
+				return nil, fmt.Errorf("debug_token unavailable")
 			default:
 				t.Fatalf("unexpected path: %s", path)
 				return nil, nil
@@ -189,6 +206,8 @@ func TestAuthStatus_EmptyPermissions(t *testing.T) {
 			case "/me/permissions":
 				body := `{"data":[]}`
 				return &Response{Body: []byte(body), StatusCode: http.StatusOK}, nil
+			case "/debug_token":
+				return nil, fmt.Errorf("debug_token unavailable")
 			default:
 				t.Fatalf("unexpected path: %s", path)
 				return nil, nil
@@ -221,6 +240,8 @@ func TestAuthStatus_MeFieldsParsed(t *testing.T) {
 			case "/me/permissions":
 				body := `{"data":[]}`
 				return &Response{Body: []byte(body), StatusCode: http.StatusOK}, nil
+			case "/debug_token":
+				return nil, fmt.Errorf("debug_token unavailable")
 			default:
 				t.Fatalf("unexpected path: %s", path)
 				return nil, nil

@@ -25,6 +25,11 @@ func TestAuthCommand_Success(t *testing.T) {
 				Body:       []byte(`{"data":[{"permission":"ads_read","status":"granted"}]}`),
 				StatusCode: 200,
 			}, nil
+		case "/debug_token":
+			return &meta.Response{
+				Body:       []byte(`{"data":{"app_id":"app_456","application":"Test App","expires_at":1713139200,"scopes":"ads_read,ads_management"}}`),
+				StatusCode: 200,
+			}, nil
 		default:
 			return nil, fmt.Errorf("unexpected path: %s", path)
 		}
@@ -50,6 +55,15 @@ func TestAuthCommand_Success(t *testing.T) {
 	if result.User.Name != "Test User" {
 		t.Errorf("expected user name 'Test User', got %q", result.User.Name)
 	}
+	if result.App.ID != "app_456" {
+		t.Errorf("expected app ID 'app_456', got %q", result.App.ID)
+	}
+	if result.App.Name != "Test App" {
+		t.Errorf("expected app name 'Test App', got %q", result.App.Name)
+	}
+	if result.ExpiresAt != "1713139200" {
+		t.Errorf("expected expires_at '1713139200', got %q", result.ExpiresAt)
+	}
 }
 
 func TestAuthCommand_DomainReturnsError(t *testing.T) {
@@ -62,9 +76,12 @@ func TestAuthCommand_DomainReturnsError(t *testing.T) {
 	}
 
 	// Verify domain layer returns proper error (CLI exit is tested via integration).
-	_, err := meta.AuthStatus(context.Background(), mc)
+	result, err := meta.AuthStatus(context.Background(), mc)
 	if err == nil {
 		t.Fatal("expected error from AuthStatus")
+	}
+	if result != nil {
+		t.Errorf("expected nil result on error, got %v", result)
 	}
 
 	var ge *meta.GraphError
