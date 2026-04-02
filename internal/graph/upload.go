@@ -1,121 +1,317 @@
 package graph
 
 import (
-	 "bytes"
-  "context"
-  "errors"
-  "fmt"
-  "io"
-  "mime/multipart"
-  "net/http"
-  "net/url"
-  "time"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 
-  meta "github.com/enriquefft/meta-cli/internal/meta"
+	meta "github.com/enriquefft/meta-cli/internal/meta"
 )
 
-const maxResponseSize = 50 << 20 // 50MB
+const resumableThreshold int64 = 1 << 30
+const chunkSize = 4 << 20
 
-const chunkSize = 4 << 20 // 4MB
-const resumableThreshold int64 = 1 << 30 // 1GB
+func (c *Client) Upload(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*meta.Response, error) {
+	p := make(map[string]string, len(params)+1)
+	for k, v := range params {
+		p[k] = v
+	}
+	p["access_token"] = c.token
 
-)
+	if size >= resumableThreshold {
+		if ra, ok := file.(io.ReaderAt); ok {
+			return c.resumableUpload(ctx, path, ra, filename, size, p)
+		}
+	}
 
-var bufPool = sync.Pool{}
-
-var writer = multipart.NewWriter(w)
-    err := done()
-    return nil, buf
-    buf:Pool()
+	return c.simpleUpload(ctx, path, file, filename, p)
 }
 
-func (c *Client) simpleUpload(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*meta.Response, error) {
-  r, w := io.Pipe()
-  writer := multipart.NewWriter(w)
-  go func() {
-    defer w.Close()
-    if err != nil {
-      w.CloseWithError(err)
-      return
-    }
-    if _, err := io.Copy(part, file); err != nil {
-      w.CloseWithError(err)
-      return
-    }
-    for k, v := range p {
-      if err := writer.WriteField(k, v); err != nil {
-        w.CloseWithError(err)
-        return
-      }
-    }
-    writer.Close()
-  }()
+func (c *Client) simpleUpload(ctx context.Context, path string, file io.Reader, filename string, params map[string]string) (*meta.Response, error) {
+	r, w := io.Pipe()
+	mpW := multipart.NewWriter(w)
 
-  u := c.baseURL + path
-  req, err != nil {
-        r.Close()
-        return nil, fmt.Errorf("creating request: %w", err)
-  }
-  req.Header.Set("Content-Type", writer.FormDataContentType())
-  resp, err := c.httpClient.Do(req)
- {
-    if err != nil {
-        r.Close()
-        return nil, fmt.Errorf("executing upload: %w", err)
-    }
-    defer resp.Body.Close()
-    body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-    if err != nil {
-        return nil, fmt.Errorf("reading response: %w", err)
-    }
-    result := &meta.Response{
-        Body:       body,
-        StatusCode: resp.StatusCode,
-        Headers:    resp.Header,
-    }
-    if err := CheckResponse(result); err != nil {
-        return result, err
-    }
-    return result, nil
+	pipeErrCh := make(chan error, 1)
+	go func() {
+		defer func() { _ = w.Close() }()
+		part, err := mpW.CreateFormFile("source", filename)
+		if err != nil {
+			pipeErrCh <- err
+			_ = w.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			pipeErrCh <- err
+			_ = w.CloseWithError(err)
+			return
+		}
+		for k, v := range params {
+			if err := mpW.WriteField(k, v); err != nil {
+				pipeErrCh <- err
+				_ = w.CloseWithError(err)
+				return
+			}
+		}
+		pipeErrCh <- mpW.Close()
+	}()
+
+	u := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, r)
+	if err != nil {
+		_ = r.Close()
+		return nil, fmt.Errorf("creating upload request: %w", err)
+	}
+	req.Header.Set("Content-Type", mpW.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		if pipeErr := <-pipeErrCh; pipeErr != nil {
+			return nil, pipeErr
+		}
+		return nil, fmt.Errorf("executing upload: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("reading upload response: %w", err)
+	}
+
+	result := &meta.Response{
+		Body:       body,
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Header,
+	}
+
+	if err := CheckResponse(result); err != nil {
+		return result, err
+	}
+
+	return result, nil
 }
 
-func (c *Client) resumableUpload(ctx context.Context, path string, file io.ReaderAt, offset int64, filename string, size int64, params map[string]string) (*meta.Response, error) {
-  startResp, err := c.startUploadSession(ctx, path, file, offset, params)
-        if err != nil {
-        return nil, fmt.Errorf("start upload session: %w", err)
-    }
+type uploadSessionResponse struct {
+	VideoUploadSessionID string `json:"video_upload_session_id"`
+	VideoID              string `json:"video_id"`
+	StartOffset          string `json:"start_offset"`
+	EndOffset            string `json:"end_offset"`
+}
 
-    sessionID := resp.Body
-1]
-    offset, int64
- chunkSize)
-    if offset >= 0 && offset < int64(chunkSize) {
-        break
-    }
+type finishUploadResponse struct {
+	Success bool   `json:"success"`
+	VideoID string `json:"video_id"`
+}
 
-    for offset < int64(chunkSize) {
-        buf.Reset()
-        chunk := bytes.NewReader(buf[offset:offset(chunkSize:])
-        if _, err := io.Copy(part, file); err != nil {
-            chunkBuf.Reset()
-            w.CloseWithError(err)
-            return
-        }
-        writer.Close()
-    }
+func (c *Client) startUploadSession(ctx context.Context, path string, params map[string]string) (*uploadSessionResponse, error) {
+	form := url.Values{}
+	for k, v := range params {
+		form.Set(k, v)
+	}
+	form.Set("upload_phase", "start")
 
-    finishResp, err := c.finishUpload(ctx, path, sessionID, params)
-    if err != nil {
-        return nil, fmt.Errorf("finish upload session: %w", err)
-    }
+	u := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating start session request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-    finishResp.Body[1]
-    if finishResp.VideoID != "" {
-        return nil, fmt.Errorf("missing video_id in finish response: %v", finishResp.Body[1]
-    }
-    return &meta.Response{
-        Body:       body,
-        StatusCode: 200,
-        Headers:    resp.Header,
-    }, nil
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing start session: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("reading start session response: %w", err)
+	}
+
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("start session failed (HTTP %d): %s", resp.StatusCode, body)
+	}
+
+	var session uploadSessionResponse
+	if err := json.Unmarshal(body, &session); err != nil {
+		return nil, fmt.Errorf("parsing start session response: %w", err)
+	}
+
+	return &session, nil
+}
+
+var chunkBufPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, chunkSize)
+		return &buf
+	},
+}
+
+func (c *Client) transferChunk(ctx context.Context, path string, sessionID string, file io.ReaderAt, offset int64, accessToken string) (string, error) {
+	bufPtr := chunkBufPool.Get().(*[]byte)
+	defer chunkBufPool.Put(bufPtr)
+	buf := *bufPtr
+
+	n, err := file.ReadAt(buf, offset)
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("reading chunk at offset %d: %w", offset, err)
+	}
+	if n == 0 {
+		return "", nil
+	}
+
+	r, w := io.Pipe()
+	mpW := multipart.NewWriter(w)
+
+	go func() {
+		defer func() { _ = w.Close() }()
+		part, err := mpW.CreateFormFile("video_file_chunk", "chunk")
+		if err != nil {
+			_ = w.CloseWithError(err)
+			return
+		}
+		if _, err := part.Write(buf[:n]); err != nil {
+			_ = w.CloseWithError(err)
+			return
+		}
+		if err := mpW.WriteField("access_token", accessToken); err != nil {
+			_ = w.CloseWithError(err)
+			return
+		}
+		if err := mpW.WriteField("upload_phase", "transfer"); err != nil {
+			_ = w.CloseWithError(err)
+			return
+		}
+		if err := mpW.WriteField("upload_session_id", sessionID); err != nil {
+			_ = w.CloseWithError(err)
+			return
+		}
+		if err := mpW.WriteField("start_offset", fmt.Sprintf("%d", offset)); err != nil {
+			_ = w.CloseWithError(err)
+			return
+		}
+		_ = mpW.Close()
+	}()
+
+	u := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, r)
+	if err != nil {
+		_ = r.Close()
+		return "", fmt.Errorf("creating transfer request: %w", err)
+	}
+	req.Header.Set("Content-Type", mpW.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("executing transfer: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return "", fmt.Errorf("reading transfer response: %w", err)
+	}
+
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("transfer failed (HTTP %d): %s", resp.StatusCode, body)
+	}
+
+	var result struct {
+		StartOffset string `json:"start_offset"`
+		EndOffset   string `json:"end_offset"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parsing transfer response: %w", err)
+	}
+
+	return result.StartOffset, nil
+}
+
+func (c *Client) finishUpload(ctx context.Context, path string, sessionID string, params map[string]string) (*finishUploadResponse, error) {
+	form := url.Values{}
+	for k, v := range params {
+		form.Set(k, v)
+	}
+	form.Set("upload_phase", "finish")
+	form.Set("upload_session_id", sessionID)
+
+	u := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating finish request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing finish: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return nil, fmt.Errorf("reading finish response: %w", err)
+	}
+
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("finish failed (HTTP %d): %s", resp.StatusCode, body)
+	}
+
+	var fin finishUploadResponse
+	if err := json.Unmarshal(body, &fin); err != nil {
+		return nil, fmt.Errorf("parsing finish response: %w", err)
+	}
+
+	return &fin, nil
+}
+
+func (c *Client) resumableUpload(ctx context.Context, path string, file io.ReaderAt, filename string, size int64, params map[string]string) (*meta.Response, error) {
+	params["file_size"] = fmt.Sprintf("%d", size)
+	params["file_name"] = filename
+
+	session, err := c.startUploadSession(ctx, path, params)
+	if err != nil {
+		return nil, err
+	}
+
+	var offset int64
+	for offset < size {
+		nextOffset, err := c.transferChunk(ctx, path, session.VideoUploadSessionID, file, offset, params["access_token"])
+		if err != nil {
+			return nil, fmt.Errorf("transferring chunk at offset %d: %w", offset, err)
+		}
+		if nextOffset == "" {
+			offset += int64(chunkSize)
+		} else {
+			var parsed int64
+			if _, err := fmt.Sscanf(nextOffset, "%d", &parsed); err != nil {
+				return nil, fmt.Errorf("invalid start_offset %q from API: %w", nextOffset, err)
+			}
+			if parsed <= offset {
+				offset += int64(chunkSize)
+			} else {
+				offset = parsed
+			}
+		}
+	}
+
+	fin, err := c.finishUpload(ctx, path, session.VideoUploadSessionID, params)
+	if err != nil {
+		return nil, err
+	}
+
+	resultBody, _ := json.Marshal(map[string]string{
+		"id":            fin.VideoID,
+		"upload_status": "processing",
+	})
+
+	return &meta.Response{
+		Body:       resultBody,
+		StatusCode: 200,
+	}, nil
 }
