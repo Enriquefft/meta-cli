@@ -68,7 +68,12 @@ func (it *PageIterator) Next(ctx context.Context) bool {
 			Next string `json:"next"`
 		} `json:"paging"`
 	}
-	if json.Unmarshal(resp.Body, &page) != nil || page.Paging.Cursors.After == "" {
+	if err := json.Unmarshal(resp.Body, &page); err != nil {
+		it.err = fmt.Errorf("parsing pagination metadata: %w", err)
+		it.hasNext = false
+		return true
+	}
+	if page.Paging.Cursors.After == "" {
 		it.hasNext = false
 		return true
 	}
