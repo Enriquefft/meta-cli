@@ -6,6 +6,13 @@ import (
 	"fmt"
 )
 
+// creativeFields is the canonical set of fields requested from the Graph API
+// for an ad creative resource. CreateCreative issues a follow-up GET with
+// this field list after the POST returns only {"id": ...}, so the caller
+// always receives a fully populated Creative. It is the single source of
+// truth for the shape meta-cli exposes for a creative.
+const creativeFields = "id,name"
+
 // CreateCreativeParams holds the input for creating a Meta ad creative.
 type CreateCreativeParams struct {
 	AccountID          string
@@ -57,9 +64,13 @@ func CreateCreative(ctx context.Context, client Client, params CreateCreativePar
 		return nil, fmt.Errorf("creating creative: %w", err)
 	}
 
+	// Meta's POST /act_*/adcreatives endpoint only returns the new
+	// creative's id. Chain a follow-up GET via the shared fetchAfterCreate
+	// helper so callers receive a fully populated Creative instead of an
+	// object with an empty name.
 	var creative Creative
-	if err := json.Unmarshal(resp.Body, &creative); err != nil {
-		return nil, fmt.Errorf("parsing creative response: %w", err)
+	if err := fetchAfterCreate(ctx, client, resp.Body, "creative", creativeFields, &creative); err != nil {
+		return nil, err
 	}
 
 	return &creative, nil

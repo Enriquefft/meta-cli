@@ -7,6 +7,13 @@ import (
 	"strconv"
 )
 
+// adSetFields is the canonical set of fields requested from the Graph API
+// for an ad set resource. CreateAdSet issues a follow-up GET with this
+// field list after the POST returns only {"id": ...}, so the caller always
+// receives a fully populated AdSet. It is the single source of truth for
+// the shape meta-cli exposes for an ad set.
+const adSetFields = "id,name,campaign_id,status,daily_budget,lifetime_budget,optimization_goal,billing_event"
+
 // CreateAdSetParams holds the input for creating a Meta ad set.
 type CreateAdSetParams struct {
 	AccountID           string
@@ -109,9 +116,13 @@ func CreateAdSet(ctx context.Context, client Client, params CreateAdSetParams) (
 		return nil, fmt.Errorf("creating ad set: %w", err)
 	}
 
+	// Meta's POST /act_*/adsets endpoint only returns the new ad set's id.
+	// Chain a follow-up GET via the shared fetchAfterCreate helper so
+	// callers receive a fully populated AdSet instead of an object with
+	// empty name/status fields.
 	var adset AdSet
-	if err := json.Unmarshal(resp.Body, &adset); err != nil {
-		return nil, fmt.Errorf("parsing ad set response: %w", err)
+	if err := fetchAfterCreate(ctx, client, resp.Body, "ad set", adSetFields, &adset); err != nil {
+		return nil, err
 	}
 
 	return &adset, nil

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/enriquefft/meta-cli/internal/meta"
@@ -12,9 +13,17 @@ func TestCampaignsCommand_Success(t *testing.T) {
 	mc := &mockClient{}
 	var capturedPath string
 	var capturedParams map[string]string
+	// Meta's POST /campaigns only returns the new campaign's id. CreateCampaign
+	// chains a follow-up GET to enrich the returned record; wire up both.
 	mc.postFn = func(ctx context.Context, path string, params map[string]string) (*meta.Response, error) {
 		capturedPath = path
 		capturedParams = params
+		return &meta.Response{
+			Body:       []byte(`{"id":"camp_789"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
 		return &meta.Response{
 			Body:       []byte(`{"id":"camp_789","name":"Test Campaign","objective":"OUTCOME_SALES","status":"PAUSED","daily_budget":"5000"}`),
 			StatusCode: 200,
@@ -96,6 +105,12 @@ func TestCampaignsCommand_LifetimeBudget(t *testing.T) {
 	var capturedParams map[string]string
 	mc.postFn = func(ctx context.Context, path string, params map[string]string) (*meta.Response, error) {
 		capturedParams = params
+		return &meta.Response{
+			Body:       []byte(`{"id":"camp_lt"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
 		return &meta.Response{
 			Body:       []byte(`{"id":"camp_lt","name":"Lifetime Campaign","objective":"OUTCOME_TRAFFIC","status":"PAUSED","lifetime_budget":"10000"}`),
 			StatusCode: 200,

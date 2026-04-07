@@ -7,6 +7,13 @@ import (
 	"strconv"
 )
 
+// campaignFields is the canonical set of fields requested from the Graph API
+// for a campaign resource. CreateCampaign issues a follow-up GET with this
+// field list after the POST returns only {"id": ...}, so the caller always
+// receives a fully populated Campaign. It is the single source of truth for
+// the shape meta-cli exposes for a campaign.
+const campaignFields = "id,name,objective,status,daily_budget,lifetime_budget,bid_strategy,special_ad_categories"
+
 // CreateCampaignParams holds the input for creating a Meta campaign.
 type CreateCampaignParams struct {
 	AccountID           string
@@ -76,9 +83,13 @@ func CreateCampaign(ctx context.Context, client Client, params CreateCampaignPar
 		return nil, fmt.Errorf("creating campaign: %w", err)
 	}
 
+	// Meta's POST /act_*/campaigns endpoint only returns the new campaign's
+	// id. Chain a follow-up GET via the shared fetchAfterCreate helper so
+	// callers receive a fully populated Campaign instead of an object with
+	// empty name/objective/status fields.
 	var campaign Campaign
-	if err := json.Unmarshal(resp.Body, &campaign); err != nil {
-		return nil, fmt.Errorf("parsing campaign response: %w", err)
+	if err := fetchAfterCreate(ctx, client, resp.Body, "campaign", campaignFields, &campaign); err != nil {
+		return nil, err
 	}
 
 	return &campaign, nil

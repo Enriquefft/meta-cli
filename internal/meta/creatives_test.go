@@ -3,9 +3,30 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 )
+
+// creativeGetFn returns a GetFn suitable for the MockClient that answers the
+// follow-up GET issued by CreateCreative after the POST returns only
+// {"id": ...}. The returned body mirrors the shape the real Graph API sends
+// for the creativeFields field list.
+func creativeGetFn(t *testing.T, creative Creative) func(ctx context.Context, path string, params url.Values) (*Response, error) {
+	t.Helper()
+	return func(_ context.Context, path string, params url.Values) (*Response, error) {
+		expectedPath := "/" + creative.ID
+		if path != expectedPath {
+			t.Errorf("expected GET path %s, got %s", expectedPath, path)
+		}
+		if params.Get("fields") != creativeFields {
+			t.Errorf("expected fields %q, got %q", creativeFields, params.Get("fields"))
+		}
+		body, _ := json.Marshal(creative)
+		return &Response{Body: body, StatusCode: 200}, nil
+	}
+}
 
 func TestCreateCreative_Video(t *testing.T) {
 	var capturedPath string
@@ -15,12 +36,9 @@ func TestCreateCreative_Video(t *testing.T) {
 		PostFn: func(_ context.Context, path string, params map[string]string) (*Response, error) {
 			capturedPath = path
 			capturedParams = params
-			body, _ := json.Marshal(Creative{
-				ID:   "cr_123",
-				Name: "Video Creative",
-			})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"cr_123"}`), StatusCode: 200}, nil
 		},
+		GetFn: creativeGetFn(t, Creative{ID: "cr_123", Name: "Video Creative"}),
 	}
 
 	params := CreateCreativeParams{
@@ -103,9 +121,9 @@ func TestCreateCreative_ImageHash(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(Creative{ID: "cr_456", Name: "Image Creative"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"cr_456"}`), StatusCode: 200}, nil
 		},
+		GetFn: creativeGetFn(t, Creative{ID: "cr_456", Name: "Image Creative"}),
 	}
 
 	params := CreateCreativeParams{
@@ -164,9 +182,9 @@ func TestCreateCreative_ImageURL(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(Creative{ID: "cr_789"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"cr_789"}`), StatusCode: 200}, nil
 		},
+		GetFn: creativeGetFn(t, Creative{ID: "cr_789"}),
 	}
 
 	params := CreateCreativeParams{
@@ -206,9 +224,9 @@ func TestCreateCreative_DefaultCTA(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(Creative{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: creativeGetFn(t, Creative{ID: "1"}),
 	}
 
 	params := CreateCreativeParams{
@@ -243,9 +261,9 @@ func TestCreateCreative_InstagramAccount(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(Creative{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: creativeGetFn(t, Creative{ID: "1"}),
 	}
 
 	params := CreateCreativeParams{
@@ -279,9 +297,9 @@ func TestCreateCreative_AccountIDNormalization(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, path string, _ map[string]string) (*Response, error) {
 			capturedPath = path
-			body, _ := json.Marshal(Creative{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: creativeGetFn(t, Creative{ID: "1"}),
 	}
 
 	params := CreateCreativeParams{
@@ -390,5 +408,107 @@ func TestCreateCreative_NoMediaSource(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "validation") {
 		t.Errorf("expected validation error, got: %v", err)
+	}
+}
+
+// TestCreateCreative_FetchesFullRecordAfterCreate is the regression test for
+// the empty-fields bug: Meta's POST /adcreatives returns only {"id": ...},
+// so CreateCreative must issue a follow-up GET to enrich the returned
+// Creative with its name.
+func TestCreateCreative_FetchesFullRecordAfterCreate(t *testing.T) {
+	var postCalled, getCalled bool
+
+	mock := &MockClient{
+		PostFn: func(_ context.Context, path string, _ map[string]string) (*Response, error) {
+			postCalled = true
+			if path != "/act_55/adcreatives" {
+				t.Errorf("expected POST path /act_55/adcreatives, got %s", path)
+			}
+			return &Response{Body: []byte(`{"id":"cr_full"}`), StatusCode: 200}, nil
+		},
+		GetFn: func(_ context.Context, path string, params url.Values) (*Response, error) {
+			getCalled = true
+			if path != "/cr_full" {
+				t.Errorf("expected GET path /cr_full, got %s", path)
+			}
+			if params.Get("fields") != creativeFields {
+				t.Errorf("expected fields %q, got %q", creativeFields, params.Get("fields"))
+			}
+			return &Response{Body: []byte(`{"id":"cr_full","name":"Enriched Creative"}`), StatusCode: 200}, nil
+		},
+	}
+
+	result, err := CreateCreative(context.Background(), mock, CreateCreativeParams{
+		AccountID: "55",
+		Name:      "Enriched Creative",
+		PageID:    "page_55",
+		ImageHash: "hash_55",
+		Message:   "Msg",
+		Link:      "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !postCalled {
+		t.Fatal("expected CreateCreative to POST")
+	}
+	if !getCalled {
+		t.Fatal("expected CreateCreative to issue a follow-up GET for full metadata")
+	}
+	if result.ID != "cr_full" {
+		t.Errorf("expected ID cr_full, got %q", result.ID)
+	}
+	if result.Name != "Enriched Creative" {
+		t.Errorf("expected Name Enriched Creative, got %q", result.Name)
+	}
+}
+
+// TestCreateCreative_MissingIDInPostResponse asserts a defensive error is
+// returned when the POST response lacks an id.
+func TestCreateCreative_MissingIDInPostResponse(t *testing.T) {
+	mock := &MockClient{
+		PostFn: func(_ context.Context, _ string, _ map[string]string) (*Response, error) {
+			return &Response{Body: []byte(`{}`), StatusCode: 200}, nil
+		},
+	}
+
+	_, err := CreateCreative(context.Background(), mock, CreateCreativeParams{
+		AccountID: "1",
+		Name:      "Test",
+		PageID:    "page_1",
+		ImageHash: "hash",
+		Message:   "Msg",
+		Link:      "https://example.com",
+	})
+	if err == nil {
+		t.Fatal("expected error when POST response omits id")
+	}
+	if !strings.Contains(err.Error(), "creative id") {
+		t.Errorf("expected error to mention missing creative id, got: %v", err)
+	}
+}
+
+// TestCreateCreative_PostErrorPropagated asserts POST-level transport errors
+// short-circuit the Create flow and are surfaced to the caller.
+func TestCreateCreative_PostErrorPropagated(t *testing.T) {
+	mock := &MockClient{
+		PostFn: func(_ context.Context, _ string, _ map[string]string) (*Response, error) {
+			return nil, fmt.Errorf("i/o timeout")
+		},
+	}
+
+	_, err := CreateCreative(context.Background(), mock, CreateCreativeParams{
+		AccountID: "1",
+		Name:      "Test",
+		PageID:    "page_1",
+		ImageHash: "hash",
+		Message:   "Msg",
+		Link:      "https://example.com",
+	})
+	if err == nil {
+		t.Fatal("expected POST error to be propagated")
+	}
+	if !strings.Contains(err.Error(), "i/o timeout") {
+		t.Errorf("expected original error in chain, got: %v", err)
 	}
 }

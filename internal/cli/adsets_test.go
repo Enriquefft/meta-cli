@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/enriquefft/meta-cli/internal/meta"
@@ -12,9 +13,17 @@ func TestAdSetsCommand_Success(t *testing.T) {
 	mc := &mockClient{}
 	var capturedPath string
 	var capturedParams map[string]string
+	// Meta's POST /adsets only returns the new ad set's id. CreateAdSet
+	// chains a follow-up GET to enrich the returned record; wire up both.
 	mc.postFn = func(ctx context.Context, path string, params map[string]string) (*meta.Response, error) {
 		capturedPath = path
 		capturedParams = params
+		return &meta.Response{
+			Body:       []byte(`{"id":"adset_123"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
 		return &meta.Response{
 			Body:       []byte(`{"id":"adset_123","name":"My AdSet","campaign_id":"camp_1","status":"PAUSED","daily_budget":"500"}`),
 			StatusCode: 200,

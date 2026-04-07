@@ -123,8 +123,17 @@ func TestHandleListAccounts(t *testing.T) {
 func TestHandleCreateCampaign(t *testing.T) {
 	mc := &testMockClient{}
 	var capturedParams map[string]string
+	// Meta's POST /campaigns only returns the new campaign's id.
+	// CreateCampaign chains a follow-up GET to enrich the returned record;
+	// wire up both.
 	mc.postFn = func(ctx context.Context, path string, params map[string]string) (*meta.Response, error) {
 		capturedParams = params
+		return &meta.Response{
+			Body:       []byte(`{"id":"camp_123"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
 		return &meta.Response{
 			Body:       []byte(`{"id":"camp_123","name":"Test Campaign","objective":"OUTCOME_SALES","status":"PAUSED","daily_budget":"5000"}`),
 			StatusCode: 200,
@@ -157,7 +166,15 @@ func TestHandleCreateCampaign(t *testing.T) {
 
 func TestHandleCreateAd(t *testing.T) {
 	mc := &testMockClient{}
+	// Meta's POST /ads only returns the new ad's id. CreateAd chains a
+	// follow-up GET to enrich the returned record; wire up both.
 	mc.postFn = func(ctx context.Context, path string, params map[string]string) (*meta.Response, error) {
+		return &meta.Response{
+			Body:       []byte(`{"id":"ad_123"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
 		return &meta.Response{
 			Body:       []byte(`{"id":"ad_123","name":"Test Ad","adset_id":"adset_456","creative":{"id":"crtv_789"},"status":"PAUSED"}`),
 			StatusCode: 200,
@@ -473,8 +490,16 @@ func TestHandleUploadVideo_FileNotFound(t *testing.T) {
 func TestHandleCreateAdSet(t *testing.T) {
 	mc := &testMockClient{}
 	var capturedParams map[string]string
+	// Meta's POST /adsets only returns the new ad set's id. CreateAdSet
+	// chains a follow-up GET to enrich the returned record; wire up both.
 	mc.postFn = func(ctx context.Context, path string, params map[string]string) (*meta.Response, error) {
 		capturedParams = params
+		return &meta.Response{
+			Body:       []byte(`{"id":"adset_001"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
 		return &meta.Response{
 			Body:       []byte(`{"id":"adset_001","name":"Test AdSet","campaign_id":"camp_123","status":"PAUSED","daily_budget":"5000"}`),
 			StatusCode: 200,
@@ -596,8 +621,17 @@ func TestHandleCreateAdSet_MissingRequired(t *testing.T) {
 func TestHandleCreateCreative(t *testing.T) {
 	mc := &testMockClient{}
 	var capturedParams map[string]string
+	// Meta's POST /adcreatives only returns the new creative's id.
+	// CreateCreative chains a follow-up GET to enrich the returned record;
+	// wire up both.
 	mc.postFn = func(ctx context.Context, path string, params map[string]string) (*meta.Response, error) {
 		capturedParams = params
+		return &meta.Response{
+			Body:       []byte(`{"id":"crtv_001"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
 		return &meta.Response{
 			Body:       []byte(`{"id":"crtv_001","name":"Test Creative"}`),
 			StatusCode: 200,

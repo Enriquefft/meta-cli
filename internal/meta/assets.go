@@ -44,13 +44,6 @@ type VideoStatus struct {
 	ProcessingProgress int    `json:"processing_progress"`
 }
 
-// uploadResponse is the thin envelope Meta returns from the POST /advideos
-// endpoint (and from the resumable finish phase). It only carries the new
-// video's ID; full metadata must be fetched separately.
-type uploadResponse struct {
-	ID string `json:"id"`
-}
-
 // normalizeAccountID strips an optional "act_" prefix and returns the numeric ID.
 func normalizeAccountID(id string) string {
 	return strings.TrimPrefix(id, "act_")
@@ -85,15 +78,15 @@ func UploadVideo(ctx context.Context, client Client, params UploadVideoParams) (
 		return nil, err
 	}
 
-	var created uploadResponse
-	if err := json.Unmarshal(resp.Body, &created); err != nil {
-		return nil, fmt.Errorf("parsing upload response: %w", err)
+	// Meta's POST /act_*/advideos endpoint (and the resumable finish phase)
+	// only returns the new video's id. Chain a follow-up GET via the shared
+	// fetchAfterCreate helper so callers always receive a fully populated
+	// Video record regardless of which upload code path produced it.
+	var video Video
+	if err := fetchAfterCreate(ctx, client, resp.Body, "video", videoFields, &video); err != nil {
+		return nil, err
 	}
-	if created.ID == "" {
-		return nil, fmt.Errorf("upload response missing video id")
-	}
-
-	return GetVideoStatus(ctx, client, VideoStatusParams{VideoID: created.ID})
+	return &video, nil
 }
 
 // UploadImageParams contains parameters for uploading an image to an ad account.

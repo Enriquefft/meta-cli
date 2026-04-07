@@ -3,9 +3,30 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 )
+
+// adSetGetFn returns a GetFn suitable for the MockClient that answers the
+// follow-up GET issued by CreateAdSet after the POST returns only
+// {"id": ...}. The returned body mirrors the shape the real Graph API sends
+// for the adSetFields field list.
+func adSetGetFn(t *testing.T, adset AdSet) func(ctx context.Context, path string, params url.Values) (*Response, error) {
+	t.Helper()
+	return func(_ context.Context, path string, params url.Values) (*Response, error) {
+		expectedPath := "/" + adset.ID
+		if path != expectedPath {
+			t.Errorf("expected GET path %s, got %s", expectedPath, path)
+		}
+		if params.Get("fields") != adSetFields {
+			t.Errorf("expected fields %q, got %q", adSetFields, params.Get("fields"))
+		}
+		body, _ := json.Marshal(adset)
+		return &Response{Body: body, StatusCode: 200}, nil
+	}
+}
 
 func TestCreateAdSet_Success(t *testing.T) {
 	var capturedPath string
@@ -15,15 +36,15 @@ func TestCreateAdSet_Success(t *testing.T) {
 		PostFn: func(_ context.Context, path string, params map[string]string) (*Response, error) {
 			capturedPath = path
 			capturedParams = params
-			body, _ := json.Marshal(AdSet{
-				ID:          "111222",
-				Name:        "Test AdSet",
-				CampaignID:  "camp_123",
-				Status:      "PAUSED",
-				DailyBudget: "5000",
-			})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"111222"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{
+			ID:          "111222",
+			Name:        "Test AdSet",
+			CampaignID:  "camp_123",
+			Status:      "PAUSED",
+			DailyBudget: "5000",
+		}),
 	}
 
 	params := CreateAdSetParams{
@@ -76,9 +97,9 @@ func TestCreateAdSet_TargetingSpec(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(AdSet{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{ID: "1"}),
 	}
 
 	params := CreateAdSetParams{
@@ -160,9 +181,9 @@ func TestCreateAdSet_DefaultAgesAndGenders(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(AdSet{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{ID: "1"}),
 	}
 
 	params := CreateAdSetParams{
@@ -208,9 +229,9 @@ func TestCreateAdSet_LifetimeBudget(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(AdSet{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{ID: "1"}),
 	}
 
 	params := CreateAdSetParams{
@@ -241,9 +262,9 @@ func TestCreateAdSet_AccountIDNormalization(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, path string, _ map[string]string) (*Response, error) {
 			capturedPath = path
-			body, _ := json.Marshal(AdSet{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{ID: "1"}),
 	}
 
 	params := CreateAdSetParams{
@@ -392,9 +413,9 @@ func TestCreateAdSet_OptionalFields(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(AdSet{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{ID: "1"}),
 	}
 
 	params := CreateAdSetParams{
@@ -444,9 +465,9 @@ func TestCreateAdSet_ExcludedCountriesAndPlatforms(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(AdSet{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{ID: "1"}),
 	}
 
 	params := CreateAdSetParams{
@@ -491,9 +512,9 @@ func TestCreateAdSet_BehaviorsAndCustomAudiences(t *testing.T) {
 	mock := &MockClient{
 		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
 			capturedParams = params
-			body, _ := json.Marshal(AdSet{ID: "1"})
-			return &Response{Body: body, StatusCode: 200}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: adSetGetFn(t, AdSet{ID: "1"}),
 	}
 
 	params := CreateAdSetParams{
@@ -533,5 +554,117 @@ func TestCreateAdSet_BehaviorsAndCustomAudiences(t *testing.T) {
 	aud0 := audiences[0].(map[string]interface{})
 	if aud0["id"] != "aud_1" {
 		t.Errorf("expected custom audience id 'aud_1', got %v", aud0["id"])
+	}
+}
+
+// TestCreateAdSet_FetchesFullRecordAfterCreate is the regression test for
+// the empty-fields bug: Meta's POST /adsets returns only {"id": ...}, so
+// CreateAdSet must issue a follow-up GET to enrich the returned AdSet with
+// name, campaign_id, status, and budget fields.
+func TestCreateAdSet_FetchesFullRecordAfterCreate(t *testing.T) {
+	var postCalled, getCalled bool
+
+	mock := &MockClient{
+		PostFn: func(_ context.Context, path string, _ map[string]string) (*Response, error) {
+			postCalled = true
+			if path != "/act_77/adsets" {
+				t.Errorf("expected POST path /act_77/adsets, got %s", path)
+			}
+			return &Response{Body: []byte(`{"id":"as_full"}`), StatusCode: 200}, nil
+		},
+		GetFn: func(_ context.Context, path string, params url.Values) (*Response, error) {
+			getCalled = true
+			if path != "/as_full" {
+				t.Errorf("expected GET path /as_full, got %s", path)
+			}
+			if params.Get("fields") != adSetFields {
+				t.Errorf("expected fields %q, got %q", adSetFields, params.Get("fields"))
+			}
+			body := `{"id":"as_full","name":"Enriched AS","campaign_id":"camp_77","status":"PAUSED","daily_budget":"2000"}`
+			return &Response{Body: []byte(body), StatusCode: 200}, nil
+		},
+	}
+
+	result, err := CreateAdSet(context.Background(), mock, CreateAdSetParams{
+		AccountID:        "77",
+		Name:             "Enriched AS",
+		CampaignID:       "camp_77",
+		DailyBudgetCents: 2000,
+		OptimizationGoal: "LINK_CLICKS",
+		Countries:        []string{"US"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !postCalled {
+		t.Fatal("expected CreateAdSet to POST")
+	}
+	if !getCalled {
+		t.Fatal("expected CreateAdSet to issue a follow-up GET for full metadata")
+	}
+	if result.ID != "as_full" {
+		t.Errorf("expected ID as_full, got %q", result.ID)
+	}
+	if result.Name != "Enriched AS" {
+		t.Errorf("expected Name Enriched AS, got %q", result.Name)
+	}
+	if result.CampaignID != "camp_77" {
+		t.Errorf("expected CampaignID camp_77, got %q", result.CampaignID)
+	}
+	if result.Status != "PAUSED" {
+		t.Errorf("expected Status PAUSED, got %q", result.Status)
+	}
+	if result.DailyBudget != "2000" {
+		t.Errorf("expected DailyBudget 2000, got %q", result.DailyBudget)
+	}
+}
+
+// TestCreateAdSet_MissingIDInPostResponse asserts a defensive error is
+// returned when the POST response lacks an id.
+func TestCreateAdSet_MissingIDInPostResponse(t *testing.T) {
+	mock := &MockClient{
+		PostFn: func(_ context.Context, _ string, _ map[string]string) (*Response, error) {
+			return &Response{Body: []byte(`{}`), StatusCode: 200}, nil
+		},
+	}
+
+	_, err := CreateAdSet(context.Background(), mock, CreateAdSetParams{
+		AccountID:        "1",
+		Name:             "Test",
+		CampaignID:       "c1",
+		DailyBudgetCents: 1000,
+		OptimizationGoal: "CONVERSIONS",
+		Countries:        []string{"US"},
+	})
+	if err == nil {
+		t.Fatal("expected error when POST response omits id")
+	}
+	if !strings.Contains(err.Error(), "ad set id") {
+		t.Errorf("expected error to mention missing ad set id, got: %v", err)
+	}
+}
+
+// TestCreateAdSet_PostErrorPropagated asserts POST-level transport errors
+// short-circuit the Create flow and are surfaced to the caller.
+func TestCreateAdSet_PostErrorPropagated(t *testing.T) {
+	mock := &MockClient{
+		PostFn: func(_ context.Context, _ string, _ map[string]string) (*Response, error) {
+			return nil, fmt.Errorf("connection refused")
+		},
+	}
+
+	_, err := CreateAdSet(context.Background(), mock, CreateAdSetParams{
+		AccountID:        "1",
+		Name:             "Test",
+		CampaignID:       "c1",
+		DailyBudgetCents: 1000,
+		OptimizationGoal: "CONVERSIONS",
+		Countries:        []string{"US"},
+	})
+	if err == nil {
+		t.Fatal("expected POST error to be propagated")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("expected original error in chain, got: %v", err)
 	}
 }

@@ -6,6 +6,19 @@ import (
 	"fmt"
 )
 
+// adFields is the canonical set of fields requested from the Graph API for
+// an ad resource. CreateAd issues a follow-up GET with this field list
+// after the POST returns only {"id": ...}, so the caller always receives a
+// fully populated Ad. It is the single source of truth for the shape
+// meta-cli exposes for an ad.
+//
+// Note: the creative sub-object is requested via the nested field syntax
+// "creative{id}" so the GET returns {"creative": {"id": ...}} matching the
+// AdCreative type. Requesting "creative" alone yields an object with every
+// ad creative field, which bloats the response and does not align with the
+// minimal AdCreative struct.
+const adFields = "id,name,adset_id,status,creative{id}"
+
 // CreateAdParams holds the input for creating a Meta ad.
 type CreateAdParams struct {
 	AccountID  string
@@ -62,9 +75,13 @@ func CreateAd(ctx context.Context, client Client, params CreateAdParams) (*Ad, e
 		return nil, fmt.Errorf("creating ad: %w", err)
 	}
 
+	// Meta's POST /act_*/ads endpoint only returns the new ad's id. Chain a
+	// follow-up GET via the shared fetchAfterCreate helper so callers
+	// receive a fully populated Ad instead of an object with empty
+	// name/adset_id/creative/status fields.
 	var ad Ad
-	if err := json.Unmarshal(resp.Body, &ad); err != nil {
-		return nil, fmt.Errorf("parsing ad response: %w", err)
+	if err := fetchAfterCreate(ctx, client, resp.Body, "ad", adFields, &ad); err != nil {
+		return nil, err
 	}
 
 	return &ad, nil
