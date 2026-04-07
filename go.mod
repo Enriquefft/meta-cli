@@ -6,6 +6,7 @@ require (
 	github.com/mark3labs/mcp-go v0.46.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	golang.org/x/sync v0.20.0
 )
 
 require (

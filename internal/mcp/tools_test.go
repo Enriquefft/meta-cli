@@ -264,15 +264,21 @@ func TestNewServer_RegistersTools(t *testing.T) {
 func TestHandleListPages(t *testing.T) {
 	mc := &testMockClient{}
 	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
-		return &meta.Response{
-			Body: []byte(`{
-				"data": [
-					{"id": "page_001", "name": "My Business Page", "category": "Business", "access_token": "page_token_abc"}
-				],
-				"paging": {"cursors": {"after": "page_001"}, "next": "https://graph.facebook.com/v21.0/me/accounts?after=page_001"}
-			}`),
-			StatusCode: 200,
-		}, nil
+		switch path {
+		case "/me/accounts":
+			return &meta.Response{
+				Body: []byte(`{
+					"data": [
+						{"id": "page_001", "name": "My Business Page", "category": "Business", "access_token": "page_token_abc"}
+					]
+				}`),
+				StatusCode: 200,
+			}, nil
+		case "/me/businesses":
+			return &meta.Response{Body: []byte(`{"data":[]}`), StatusCode: 200}, nil
+		default:
+			return nil, fmt.Errorf("unexpected path %q", path)
+		}
 	}
 
 	handler := handleListPages(mc)
@@ -288,11 +294,12 @@ func TestHandleListPages(t *testing.T) {
 		t.Fatal("expected content in result")
 	}
 
-	// Verify the response contains page data.
+	// Verify the response contains page data and the new enriched shape.
 	var parsed struct {
 		Data []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID      string   `json:"id"`
+			Name    string   `json:"name"`
+			Sources []string `json:"sources"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(result.Content[0].(mcplib.TextContent).Text), &parsed); err != nil {
@@ -303,6 +310,9 @@ func TestHandleListPages(t *testing.T) {
 	}
 	if parsed.Data[0].ID != "page_001" {
 		t.Errorf("expected page ID 'page_001', got %q", parsed.Data[0].ID)
+	}
+	if len(parsed.Data[0].Sources) != 1 || parsed.Data[0].Sources[0] != "direct" {
+		t.Errorf("expected sources [direct], got %v", parsed.Data[0].Sources)
 	}
 }
 
