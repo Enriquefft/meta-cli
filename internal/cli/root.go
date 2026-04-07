@@ -79,6 +79,7 @@ func Execute(ctx context.Context, store *config.ConfigStore, client meta.Client)
 		NewAdsCommand(deps),
 		NewTargetingCommand(deps),
 		NewServeCommand(deps),
+		NewUpdateCommand(deps),
 	)
 
 	// Resolve flags AFTER Cobra parses them, BEFORE any subcommand runs.

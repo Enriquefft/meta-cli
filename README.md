@@ -16,6 +16,29 @@ Or with Go:
 go install github.com/enriquefft/meta-cli/cmd/meta@latest
 ```
 
+## Updating
+
+```sh
+# Check for a new version (no download)
+meta update --check
+
+# Upgrade to the latest release in place
+meta update
+
+# Pin to a specific version
+meta update --version 0.3.0
+```
+
+`meta update` re-runs the official `install.sh` script pinned to the target
+tag, so the upgrade procedure is identical to a fresh install — same
+checksums, same install directory, same binary path. The CLI does not
+duplicate any download or verification logic.
+
+If you installed via `go install`, run
+`go install github.com/enriquefft/meta-cli/cmd/meta@latest` to upgrade.
+`meta update` detects this case and prints the same hint instead of
+running the install script.
+
 ## Quick start
 
 ```sh
