@@ -18,9 +18,8 @@ func TestListAccounts_Success(t *testing.T) {
 			if limit := params.Get("limit"); limit != "25" {
 				t.Errorf("expected limit=25, got %q", limit)
 			}
-			expectedFields := "account_id,name,account_status,currency,timezone_name,amount_spent,balance"
-			if fields := params.Get("fields"); fields != expectedFields {
-				t.Errorf("expected fields=%q, got %q", expectedFields, fields)
+			if fields := params.Get("fields"); fields != accountsFields {
+				t.Errorf("expected fields=%q, got %q", accountsFields, fields)
 			}
 			body := `{
 				"data": [

@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// meFields is the canonical set of fields requested from /me to identify the
+// authenticated user. AuthStatus and its tests reference this constant so the
+// field list lives in exactly one place.
+const meFields = "id,name"
+
 // AuthUser represents the authenticated user's identity.
 type AuthUser struct {
 	ID   string `json:"id"`
@@ -37,7 +42,7 @@ type AuthStatusResult struct {
 func AuthStatus(ctx context.Context, client Client) (*AuthStatusResult, error) {
 	// Step 1: GET /me to validate token and get user identity.
 	meParams := url.Values{}
-	meParams.Set("fields", "id,name")
+	meParams.Set("fields", meFields)
 
 	meResp, err := client.Get(ctx, "/me", meParams)
 	if err != nil {

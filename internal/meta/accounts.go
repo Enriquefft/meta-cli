@@ -10,6 +10,11 @@ import (
 
 const defaultLimit = 25
 
+// accountsFields is the canonical set of fields requested from the Graph API
+// for an ad account. Both ListAccounts and its tests reference this constant
+// so the field list lives in exactly one place.
+const accountsFields = "account_id,name,account_status,currency,timezone_name,amount_spent,balance"
+
 // ListAccountsParams configures the ad accounts listing request.
 type ListAccountsParams struct {
 	Limit int
@@ -43,7 +48,7 @@ func ListAccounts(ctx context.Context, client Client, params ListAccountsParams)
 	}
 
 	qp := url.Values{}
-	qp.Set("fields", "account_id,name,account_status,currency,timezone_name,amount_spent,balance")
+	qp.Set("fields", accountsFields)
 	qp.Set("limit", strconv.Itoa(limit))
 
 	resp, err := client.Get(ctx, "/me/adaccounts", qp)

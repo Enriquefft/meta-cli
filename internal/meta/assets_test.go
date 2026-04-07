@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// fakeHTTPDoer is the in-memory httpDoer used by EnsureVideoThumbnail tests
+// fakeHTTPDoer is the in-memory httpDoer used by ensureVideoThumbnail tests
 // to return canned responses without touching the network. It captures every
 // incoming request URL so tests can assert the call was well-formed.
 type fakeHTTPDoer struct {
@@ -769,7 +769,7 @@ func TestVideoStatus_ClientError(t *testing.T) {
 // TestEnsureVideoThumbnail_Passthrough asserts the fast path: when the caller
 // already has an image_hash, the helper returns it without touching the Graph
 // API or the HTTP CDN transport. This is load-bearing because CreateCreative
-// unconditionally routes through EnsureVideoThumbnail.
+// unconditionally routes through ensureVideoThumbnail.
 func TestEnsureVideoThumbnail_Passthrough(t *testing.T) {
 	mock := &MockClient{
 		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
@@ -790,7 +790,7 @@ func TestEnsureVideoThumbnail_Passthrough(t *testing.T) {
 	restore := setThumbnailHTTPClient(fake)
 	defer restore()
 
-	got, err := EnsureVideoThumbnail(context.Background(), mock, "123", "vid_456", "existing_hash")
+	got, err := ensureVideoThumbnail(context.Background(), mock, "123", "vid_456", "existing_hash")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -882,7 +882,7 @@ func TestEnsureVideoThumbnail_FetchesAndUploads(t *testing.T) {
 	restore := setThumbnailHTTPClient(fake)
 	defer restore()
 
-	got, err := EnsureVideoThumbnail(context.Background(), mock, accountID, videoID, "")
+	got, err := ensureVideoThumbnail(context.Background(), mock, accountID, videoID, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -935,7 +935,7 @@ func TestEnsureVideoThumbnail_VideoMissingPicture(t *testing.T) {
 	restore := setThumbnailHTTPClient(fake)
 	defer restore()
 
-	_, err := EnsureVideoThumbnail(context.Background(), mock, "acct_1", "vid_no_pic", "")
+	_, err := ensureVideoThumbnail(context.Background(), mock, "acct_1", "vid_no_pic", "")
 	if err == nil {
 		t.Fatal("expected error for video with empty picture")
 	}
@@ -981,7 +981,7 @@ func TestEnsureVideoThumbnail_DownloadFails(t *testing.T) {
 		restore := setThumbnailHTTPClient(fake)
 		defer restore()
 
-		_, err := EnsureVideoThumbnail(context.Background(), newMock(), "123", "vid_dl_fail", "")
+		_, err := ensureVideoThumbnail(context.Background(), newMock(), "123", "vid_dl_fail", "")
 		if err == nil {
 			t.Fatal("expected error on transport failure")
 		}
@@ -1002,7 +1002,7 @@ func TestEnsureVideoThumbnail_DownloadFails(t *testing.T) {
 		restore := setThumbnailHTTPClient(fake)
 		defer restore()
 
-		_, err := EnsureVideoThumbnail(context.Background(), newMock(), "123", "vid_dl_fail", "")
+		_, err := ensureVideoThumbnail(context.Background(), newMock(), "123", "vid_dl_fail", "")
 		if err == nil {
 			t.Fatal("expected error on non-2xx status")
 		}
@@ -1045,7 +1045,7 @@ func TestEnsureVideoThumbnail_UploadFails(t *testing.T) {
 	restore := setThumbnailHTTPClient(fake)
 	defer restore()
 
-	_, err := EnsureVideoThumbnail(context.Background(), mock, "123", "vid_up_fail", "")
+	_, err := ensureVideoThumbnail(context.Background(), mock, "123", "vid_up_fail", "")
 	if err == nil {
 		t.Fatal("expected error on upload failure")
 	}

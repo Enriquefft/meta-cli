@@ -14,7 +14,7 @@ import (
 // videoFields is the canonical set of fields requested from the Graph API
 // for a video resource. Both UploadVideo and GetVideoStatus use it so that
 // the two flows return identical shapes. The picture field is included so
-// EnsureVideoThumbnail can reach the auto-generated thumbnail URL without
+// ensureVideoThumbnail can reach the auto-generated thumbnail URL without
 // a second round-trip.
 const videoFields = "id,title,status,length,picture"
 
@@ -38,7 +38,7 @@ type VideoStatusParams struct {
 //
 // Picture is Meta's auto-generated thumbnail URL, served from the FB CDN.
 // It is populated once the video has finished encoding and is the source
-// used by EnsureVideoThumbnail to avoid forcing users to manually supply a
+// used by ensureVideoThumbnail to avoid forcing users to manually supply a
 // thumbnail image when creating video creatives.
 type Video struct {
 	ID      string      `json:"id"`
@@ -208,7 +208,7 @@ func UploadImage(ctx context.Context, client Client, params UploadImageParams) (
 	return &img, nil
 }
 
-// httpDoer is the minimal subset of *http.Client used by EnsureVideoThumbnail
+// httpDoer is the minimal subset of *http.Client used by ensureVideoThumbnail
 // to download Meta's CDN-hosted video thumbnails. It exists so tests can
 // inject a fake response without hitting the real network; production code
 // always uses the package-level thumbnailHTTPClient below.
@@ -221,14 +221,14 @@ type httpDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// thumbnailHTTPClient is the HTTP transport used by EnsureVideoThumbnail to
+// thumbnailHTTPClient is the HTTP transport used by ensureVideoThumbnail to
 // download video thumbnail bytes from Meta's CDN. It is a package-level var
 // purely so tests can temporarily swap it via setThumbnailHTTPClient; no
 // production code path should read or modify it, and callers of
-// EnsureVideoThumbnail treat it as an implementation detail.
+// ensureVideoThumbnail treat it as an implementation detail.
 var thumbnailHTTPClient httpDoer = http.DefaultClient
 
-// setThumbnailHTTPClient swaps the HTTP transport used by EnsureVideoThumbnail
+// setThumbnailHTTPClient swaps the HTTP transport used by ensureVideoThumbnail
 // and returns a restore function. It is package-private and intended
 // exclusively for tests — never call it from production code.
 func setThumbnailHTTPClient(c httpDoer) func() {
@@ -237,7 +237,7 @@ func setThumbnailHTTPClient(c httpDoer) func() {
 	return func() { thumbnailHTTPClient = prev }
 }
 
-// EnsureVideoThumbnail is the single source of truth for "given a video id,
+// ensureVideoThumbnail is the single source of truth for "given a video id,
 // give me an image_hash my creative's video_data block can use". Meta's
 // adcreatives endpoint rejects video creatives that do not specify an
 // image_hash or image_url inside video_data (error subcode 1443226), even
@@ -261,7 +261,7 @@ func setThumbnailHTTPClient(c httpDoer) func() {
 // Errors are wrapped with context at every step rather than swallowed, and
 // a video that has not finished encoding (empty Picture) produces a clear,
 // actionable error rather than a later Meta-side failure.
-func EnsureVideoThumbnail(ctx context.Context, client Client, accountID, videoID, imageHash string) (string, error) {
+func ensureVideoThumbnail(ctx context.Context, client Client, accountID, videoID, imageHash string) (string, error) {
 	if imageHash != "" {
 		return imageHash, nil
 	}

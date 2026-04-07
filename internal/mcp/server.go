@@ -24,13 +24,15 @@ Typical workflow:
 2. meta_list_accounts — find the right ad account
 3. meta_list_pages — get page_id (required for creatives)
 4. meta_upload_video — upload the video asset
-5. meta_upload_image — upload a thumbnail image (required by Meta for video creatives)
-6. meta_video_status — wait until encoding completes (status: "ready")
-7. meta_search_targeting — find interest/behavior IDs for audience
-8. meta_create_campaign — set objective and budget
-9. meta_create_adset — define targeting and schedule
-10. meta_create_creative — build the ad creative with video + image_hash + copy + CTA
-11. meta_create_ad — link creative to ad set
+5. meta_video_status — wait until encoding completes (status: "ready")
+6. meta_search_targeting — find interest/behavior IDs for audience
+7. meta_create_campaign — set objective and budget
+8. meta_create_adset — define targeting and schedule
+9. meta_create_creative — build the ad creative with video + copy + CTA
+   (the video's auto-generated thumbnail is resolved automatically;
+   call meta_upload_image first only if you want a custom thumbnail
+   and pass its hash via image_hash)
+10. meta_create_ad — link creative to ad set
 
 Always create campaigns and ads as PAUSED first. Budgets are in dollars (50.00 = $50).`
 

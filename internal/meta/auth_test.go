@@ -232,8 +232,8 @@ func TestAuthStatus_MeFieldsParsed(t *testing.T) {
 		GetFn: func(_ context.Context, path string, params url.Values) (*Response, error) {
 			switch path {
 			case "/me":
-				if fields := params.Get("fields"); fields != "id,name" {
-					t.Errorf("expected fields=id,name, got %q", fields)
+				if fields := params.Get("fields"); fields != meFields {
+					t.Errorf("expected fields=%q, got %q", meFields, fields)
 				}
 				body := `{"id":"99","name":"Full Name"}`
 				return &Response{Body: []byte(body), StatusCode: http.StatusOK}, nil

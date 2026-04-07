@@ -213,7 +213,7 @@ func createAdSetTool() mcplib.Tool {
 
 func createCreativeTool() mcplib.Tool {
 	return mcplib.NewTool("meta_create_creative",
-		mcplib.WithDescription("Create an ad creative with video/image, text, and call-to-action."),
+		mcplib.WithDescription("Create an ad creative with video/image, text, and call-to-action. For video creatives, the video's auto-generated thumbnail is resolved automatically — pass image_hash or image_url only if you want a custom thumbnail."),
 		mcplib.WithString("account_id",
 			mcplib.Description("The ad account ID"),
 			mcplib.Required(),
@@ -229,10 +229,10 @@ func createCreativeTool() mcplib.Tool {
 			mcplib.Description("Video ID from meta_upload_video"),
 		),
 		mcplib.WithString("image_hash",
-			mcplib.Description("Hash of a previously uploaded image. For video ads, used as thumbnail."),
+			mcplib.Description("Optional. Hash of a previously uploaded image to use as a custom thumbnail. Omit for video creatives to let meta-cli auto-resolve the video's default thumbnail."),
 		),
 		mcplib.WithString("image_url",
-			mcplib.Description("URL of an image. For video ads, used as thumbnail (required by Meta for video creatives)."),
+			mcplib.Description("Optional. URL of an image to use as a custom thumbnail. Omit for video creatives to let meta-cli auto-resolve the video's default thumbnail."),
 		),
 		mcplib.WithString("message",
 			mcplib.Description("Ad copy / body text"),

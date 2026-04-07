@@ -39,7 +39,7 @@ type Creative struct {
 //
 // When the caller provides a VideoID but no ImageHash or ImageURL,
 // CreateCreative auto-resolves a thumbnail image_hash via
-// EnsureVideoThumbnail before issuing the POST. Meta's adcreatives endpoint
+// ensureVideoThumbnail before issuing the POST. Meta's adcreatives endpoint
 // rejects video creatives without a thumbnail image even though the video
 // already has an auto-generated one, and forcing users to download /
 // re-upload / pass the hash by hand is exactly the kind of friction the CLI
@@ -52,7 +52,7 @@ func CreateCreative(ctx context.Context, client Client, params CreateCreativePar
 	}
 
 	if params.VideoID != "" && params.ImageHash == "" && params.ImageURL == "" {
-		hash, err := EnsureVideoThumbnail(ctx, client, params.AccountID, params.VideoID, "")
+		hash, err := ensureVideoThumbnail(ctx, client, params.AccountID, params.VideoID, "")
 		if err != nil {
 			return nil, fmt.Errorf("auto-resolving video thumbnail: %w", err)
 		}
