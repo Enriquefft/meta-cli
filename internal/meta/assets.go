@@ -1,18 +1,22 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 )
 
 // videoFields is the canonical set of fields requested from the Graph API
 // for a video resource. Both UploadVideo and GetVideoStatus use it so that
-// the two flows return identical shapes.
-const videoFields = "id,title,status,length"
+// the two flows return identical shapes. The picture field is included so
+// EnsureVideoThumbnail can reach the auto-generated thumbnail URL without
+// a second round-trip.
+const videoFields = "id,title,status,length,picture"
 
 // UploadVideoParams contains the parameters for uploading a video to an ad account.
 type UploadVideoParams struct {
@@ -31,11 +35,17 @@ type VideoStatusParams struct {
 // Video is the canonical representation of a Meta video resource, shared by
 // UploadVideo and GetVideoStatus. It is the single source of truth for the
 // shape of a video returned to callers.
+//
+// Picture is Meta's auto-generated thumbnail URL, served from the FB CDN.
+// It is populated once the video has finished encoding and is the source
+// used by EnsureVideoThumbnail to avoid forcing users to manually supply a
+// thumbnail image when creating video creatives.
 type Video struct {
-	ID     string      `json:"id"`
-	Title  string      `json:"title"`
-	Status VideoStatus `json:"status"`
-	Length float64     `json:"length"`
+	ID      string      `json:"id"`
+	Title   string      `json:"title"`
+	Status  VideoStatus `json:"status"`
+	Length  float64     `json:"length"`
+	Picture string      `json:"picture,omitempty"`
 }
 
 // VideoStatus represents the encoding status of a video.
@@ -196,6 +206,132 @@ func UploadImage(ctx context.Context, client Client, params UploadImageParams) (
 	}
 
 	return &img, nil
+}
+
+// httpDoer is the minimal subset of *http.Client used by EnsureVideoThumbnail
+// to download Meta's CDN-hosted video thumbnails. It exists so tests can
+// inject a fake response without hitting the real network; production code
+// always uses the package-level thumbnailHTTPClient below.
+//
+// This is intentionally a private interface: "download an arbitrary URL" is
+// not a Graph API primitive and must not be promoted to the Client interface
+// (which exclusively models Graph calls). Keeping the abstraction local to
+// this file preserves the deep-module boundary of internal/graph.
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// thumbnailHTTPClient is the HTTP transport used by EnsureVideoThumbnail to
+// download video thumbnail bytes from Meta's CDN. It is a package-level var
+// purely so tests can temporarily swap it via setThumbnailHTTPClient; no
+// production code path should read or modify it, and callers of
+// EnsureVideoThumbnail treat it as an implementation detail.
+var thumbnailHTTPClient httpDoer = http.DefaultClient
+
+// setThumbnailHTTPClient swaps the HTTP transport used by EnsureVideoThumbnail
+// and returns a restore function. It is package-private and intended
+// exclusively for tests — never call it from production code.
+func setThumbnailHTTPClient(c httpDoer) func() {
+	prev := thumbnailHTTPClient
+	thumbnailHTTPClient = c
+	return func() { thumbnailHTTPClient = prev }
+}
+
+// EnsureVideoThumbnail is the single source of truth for "given a video id,
+// give me an image_hash my creative's video_data block can use". Meta's
+// adcreatives endpoint rejects video creatives that do not specify an
+// image_hash or image_url inside video_data (error subcode 1443226), even
+// though every uploaded video already has an auto-generated thumbnail at
+// Video.Picture. Users should never have to download, re-upload, and pass
+// that hash by hand — this helper automates the full dance so CreateCreative
+// (and any future code path that needs a thumbnail hash) can stay a
+// one-liner.
+//
+// Behavior:
+//
+//   - If imageHash is non-empty it is returned as-is, no HTTP work is done.
+//     This is the hot path when the user explicitly provided one and allows
+//     callers to unconditionally route through this helper.
+//   - Otherwise accountID and videoID are validated, the video record is
+//     fetched via GetVideoStatus to obtain Video.Picture, the picture bytes
+//     are downloaded over plain HTTP from the (signed, short-lived) FB CDN
+//     URL, and UploadImage is invoked against the same ad account so the
+//     resulting Image.Hash is suitable for use as a creative thumbnail hash.
+//
+// Errors are wrapped with context at every step rather than swallowed, and
+// a video that has not finished encoding (empty Picture) produces a clear,
+// actionable error rather than a later Meta-side failure.
+func EnsureVideoThumbnail(ctx context.Context, client Client, accountID, videoID, imageHash string) (string, error) {
+	if imageHash != "" {
+		return imageHash, nil
+	}
+	if accountID == "" {
+		return "", fmt.Errorf("validation: AccountID is required")
+	}
+	if videoID == "" {
+		return "", fmt.Errorf("validation: VideoID is required")
+	}
+
+	video, err := GetVideoStatus(ctx, client, VideoStatusParams{VideoID: videoID})
+	if err != nil {
+		return "", fmt.Errorf("fetching video thumbnail: %w", err)
+	}
+	if video.Picture == "" {
+		return "", fmt.Errorf(
+			"video %s has no thumbnail picture yet; wait for encoding to finish "+
+				"or provide --image-hash / --image-url explicitly",
+			videoID,
+		)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, video.Picture, nil)
+	if err != nil {
+		return "", fmt.Errorf("building video thumbnail request: %w", err)
+	}
+	resp, err := thumbnailHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("downloading video thumbnail: %w", err)
+	}
+	defer func() {
+		// A failure closing the CDN response body has no meaningful recovery
+		// path: we have already decided whether to return the thumbnail hash
+		// or an error. Logging is not available here without violating the
+		// deep-module boundary; dropping the close error is the correct
+		// trade-off for a one-shot CDN GET.
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf(
+			"downloading video thumbnail: unexpected status %d from %s",
+			resp.StatusCode, video.Picture,
+		)
+	}
+
+	pictureBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading video thumbnail body: %w", err)
+	}
+	if len(pictureBytes) == 0 {
+		return "", fmt.Errorf("downloading video thumbnail: empty response body from %s", video.Picture)
+	}
+
+	// The /picture endpoint on Meta's CDN always serves JPEG, so a fixed
+	// extension is correct and avoids speculative content sniffing.
+	filename := fmt.Sprintf("thumb_%s.jpg", videoID)
+	image, err := UploadImage(ctx, client, UploadImageParams{
+		AccountID: accountID,
+		File:      bytes.NewReader(pictureBytes),
+		Filename:  filename,
+		FileSize:  int64(len(pictureBytes)),
+	})
+	if err != nil {
+		return "", fmt.Errorf("uploading video thumbnail: %w", err)
+	}
+	if image.Hash == "" {
+		return "", fmt.Errorf("uploading video thumbnail: upload response missing hash")
+	}
+	return image.Hash, nil
 }
 
 // GetVideoStatus fetches the current metadata and encoding status of a video.

@@ -36,9 +36,27 @@ type Creative struct {
 }
 
 // CreateCreative creates a new ad creative under the given ad account.
+//
+// When the caller provides a VideoID but no ImageHash or ImageURL,
+// CreateCreative auto-resolves a thumbnail image_hash via
+// EnsureVideoThumbnail before issuing the POST. Meta's adcreatives endpoint
+// rejects video creatives without a thumbnail image even though the video
+// already has an auto-generated one, and forcing users to download /
+// re-upload / pass the hash by hand is exactly the kind of friction the CLI
+// should eliminate. The auto-resolution is the obvious-correct default and
+// is not gated behind a flag — there is no use case for a video creative
+// without a thumbnail.
 func CreateCreative(ctx context.Context, client Client, params CreateCreativeParams) (*Creative, error) {
 	if err := validateCreativeParams(params); err != nil {
 		return nil, err
+	}
+
+	if params.VideoID != "" && params.ImageHash == "" && params.ImageURL == "" {
+		hash, err := EnsureVideoThumbnail(ctx, client, params.AccountID, params.VideoID, "")
+		if err != nil {
+			return nil, fmt.Errorf("auto-resolving video thumbnail: %w", err)
+		}
+		params.ImageHash = hash
 	}
 
 	accountID := normalizeAccountID(params.AccountID)

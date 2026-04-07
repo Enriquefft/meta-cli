@@ -639,11 +639,15 @@ func TestHandleCreateCreative(t *testing.T) {
 	}
 
 	handler := handleCreateCreative(mc)
+	// Provide image_hash explicitly so this shell test stays decoupled from
+	// the auto-thumbnail resolution path (which has its own dedicated tests
+	// in internal/meta/assets_test.go and internal/meta/creatives_test.go).
 	result, err := callTool(context.Background(), handler, map[string]any{
 		"account_id": "act_123456",
 		"name":       "Test Creative",
 		"page_id":    "page_001",
 		"video_id":   "vid_789",
+		"image_hash": "preresolved_thumb_hash",
 		"message":    "Buy our amazing product!",
 		"headline":   "Amazing Product",
 		"cta":        "SHOP_NOW",

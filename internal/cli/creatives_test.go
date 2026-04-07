@@ -33,13 +33,17 @@ func TestCreativesCommand_Success(t *testing.T) {
 
 	deps := testDeps(mc)
 	cmd := NewCreativesCommand(deps)
+	// --image-hash is supplied alongside --video so this shell test stays
+	// focused on the thin CLI-to-domain glue and does not exercise the
+	// auto-thumbnail resolution path (which has dedicated domain tests).
 	stdout, _, err := executeCommand(cmd,
 		"--name", "Test Creative",
 		"--page", "pg_123",
 		"--message", "Buy now!",
 		"--link", "https://example.com/store",
 		"--cta", "SHOP_NOW",
-		"--video", "vid_456")
+		"--video", "vid_456",
+		"--image-hash", "preresolved_thumb_hash")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,13 +126,16 @@ func TestCreativesCommand_APIError(t *testing.T) {
 
 	deps := testDeps(mc)
 	cmd := NewCreativesCommand(deps)
+	// --image-hash bypasses the auto-thumbnail resolution path so this
+	// test exclusively exercises propagation of POST errors to the CLI.
 	_, stderr, _ := executeCommand(cmd,
 		"--name", "Test Creative",
 		"--page", "pg_123",
 		"--message", "Buy now!",
 		"--link", "https://example.com/store",
 		"--cta", "SHOP_NOW",
-		"--video", "vid_456")
+		"--video", "vid_456",
+		"--image-hash", "preresolved_thumb_hash")
 	if stderr == "" {
 		t.Fatal("expected error output for API error")
 	}

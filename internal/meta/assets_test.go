@@ -1,18 +1,49 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 )
 
+// fakeHTTPDoer is the in-memory httpDoer used by EnsureVideoThumbnail tests
+// to return canned responses without touching the network. It captures every
+// incoming request URL so tests can assert the call was well-formed.
+type fakeHTTPDoer struct {
+	fn       func(req *http.Request) (*http.Response, error)
+	calls    int
+	lastURL  string
+	lastCtx  context.Context
+	lastMeth string
+}
+
+func (f *fakeHTTPDoer) Do(req *http.Request) (*http.Response, error) {
+	f.calls++
+	f.lastURL = req.URL.String()
+	f.lastCtx = req.Context()
+	f.lastMeth = req.Method
+	return f.fn(req)
+}
+
+// newFakeHTTPResponse builds a minimal *http.Response for tests.
+func newFakeHTTPResponse(status int, body []byte) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Header:     make(http.Header),
+	}
+}
+
 // videoGetFn returns a GetFn suitable for the MockClient that answers the
 // follow-up GET issued by UploadVideo after the upload completes. The returned
-// body mirrors the shape the real Graph API sends for fields=id,title,status,length.
+// body mirrors the shape the real Graph API sends for the videoFields field
+// list.
 func videoGetFn(t *testing.T, videoID, title, status string, progress int, length float64) func(ctx context.Context, path string, params url.Values) (*Response, error) {
 	t.Helper()
 	return func(ctx context.Context, path string, params url.Values) (*Response, error) {
@@ -20,8 +51,8 @@ func videoGetFn(t *testing.T, videoID, title, status string, progress int, lengt
 		if path != expectedPath {
 			t.Errorf("expected GET path %s, got %s", expectedPath, path)
 		}
-		if params.Get("fields") != "id,title,status,length" {
-			t.Errorf("expected fields id,title,status,length, got %s", params.Get("fields"))
+		if params.Get("fields") != videoFields {
+			t.Errorf("expected fields %q, got %q", videoFields, params.Get("fields"))
 		}
 		body, _ := json.Marshal(map[string]any{
 			"id":    videoID,
@@ -630,8 +661,8 @@ func TestVideoStatus_Processing(t *testing.T) {
 				t.Errorf("expected path /999888, got %s", path)
 			}
 			fields := params.Get("fields")
-			if fields != "id,title,status,length" {
-				t.Errorf("expected fields id,title,status,length, got %s", fields)
+			if fields != videoFields {
+				t.Errorf("expected fields %q, got %q", videoFields, fields)
 			}
 			body := `{
 				"id": "999888",
@@ -732,5 +763,296 @@ func TestVideoStatus_ClientError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "server error") {
 		t.Errorf("expected original error to be propagated, got: %v", err)
+	}
+}
+
+// TestEnsureVideoThumbnail_Passthrough asserts the fast path: when the caller
+// already has an image_hash, the helper returns it without touching the Graph
+// API or the HTTP CDN transport. This is load-bearing because CreateCreative
+// unconditionally routes through EnsureVideoThumbnail.
+func TestEnsureVideoThumbnail_Passthrough(t *testing.T) {
+	mock := &MockClient{
+		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
+			t.Fatal("GetFn must not be called when imageHash is already set")
+			return nil, nil
+		},
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			t.Fatal("UploadFn must not be called when imageHash is already set")
+			return nil, nil
+		},
+	}
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			t.Fatal("httpDoer must not be called when imageHash is already set")
+			return nil, nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	got, err := EnsureVideoThumbnail(context.Background(), mock, "123", "vid_456", "existing_hash")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "existing_hash" {
+		t.Errorf("expected existing_hash, got %q", got)
+	}
+	if fake.calls != 0 {
+		t.Errorf("expected zero HTTP calls, got %d", fake.calls)
+	}
+}
+
+// TestEnsureVideoThumbnail_FetchesAndUploads is the happy-path regression
+// test: the helper must GET the video record to discover Video.Picture,
+// download the bytes over plain HTTP, and POST them back to /adimages to
+// obtain a new image_hash.
+func TestEnsureVideoThumbnail_FetchesAndUploads(t *testing.T) {
+	const (
+		accountID   = "123456"
+		videoID     = "vid_thumb_happy"
+		pictureURL  = "https://scontent.xx.fbcdn.net/v/t15/auto.jpg"
+		expectHash  = "thumb_hash_xyz"
+		jpegPayload = "fake-jpeg-bytes"
+	)
+
+	var events []string
+	mock := &MockClient{
+		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
+			events = append(events, "get:"+path)
+			if path != "/"+videoID {
+				t.Errorf("expected GET path /%s, got %s", videoID, path)
+			}
+			if params.Get("fields") != videoFields {
+				t.Errorf("expected fields %q, got %q", videoFields, params.Get("fields"))
+			}
+			body, _ := json.Marshal(map[string]any{
+				"id":      videoID,
+				"title":   "Ready Video",
+				"length":  12.3,
+				"picture": pictureURL,
+				"status": map[string]any{
+					"video_status":        "ready",
+					"processing_progress": 100,
+				},
+			})
+			return &Response{Body: body, StatusCode: 200}, nil
+		},
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			events = append(events, "upload:"+path)
+			wantPath := "/act_" + accountID + "/adimages"
+			if path != wantPath {
+				t.Errorf("expected Upload path %s, got %s", wantPath, path)
+			}
+			wantName := "thumb_" + videoID + ".jpg"
+			if filename != wantName {
+				t.Errorf("expected filename %s, got %s", wantName, filename)
+			}
+			data, readErr := io.ReadAll(file)
+			if readErr != nil {
+				t.Fatalf("reading upload file: %v", readErr)
+			}
+			if string(data) != jpegPayload {
+				t.Errorf("expected upload body %q, got %q", jpegPayload, string(data))
+			}
+			if size != int64(len(jpegPayload)) {
+				t.Errorf("expected upload size %d, got %d", len(jpegPayload), size)
+			}
+			return &Response{
+				Body:       standardImageResponse(wantName, expectHash),
+				StatusCode: 200,
+			}, nil
+		},
+	}
+
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			events = append(events, "http:"+req.URL.String())
+			if req.URL.String() != pictureURL {
+				t.Errorf("expected HTTP GET %s, got %s", pictureURL, req.URL.String())
+			}
+			if req.Method != http.MethodGet {
+				t.Errorf("expected HTTP method GET, got %s", req.Method)
+			}
+			if req.Context() == nil {
+				t.Error("expected request to carry a context")
+			}
+			return newFakeHTTPResponse(200, []byte(jpegPayload)), nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	got, err := EnsureVideoThumbnail(context.Background(), mock, accountID, videoID, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != expectHash {
+		t.Errorf("expected hash %q, got %q", expectHash, got)
+	}
+	wantOrder := []string{
+		"get:/" + videoID,
+		"http:" + pictureURL,
+		"upload:/act_" + accountID + "/adimages",
+	}
+	if len(events) != len(wantOrder) {
+		t.Fatalf("expected %d events, got %d: %v", len(wantOrder), len(events), events)
+	}
+	for i, want := range wantOrder {
+		if events[i] != want {
+			t.Errorf("event %d: expected %q, got %q", i, want, events[i])
+		}
+	}
+}
+
+// TestEnsureVideoThumbnail_VideoMissingPicture asserts we fail loudly with an
+// actionable message when Meta returns a video record that does not yet have
+// a generated thumbnail (e.g. still encoding).
+func TestEnsureVideoThumbnail_VideoMissingPicture(t *testing.T) {
+	mock := &MockClient{
+		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
+			body, _ := json.Marshal(map[string]any{
+				"id":    "vid_no_pic",
+				"title": "Encoding",
+				"status": map[string]any{
+					"video_status":        "processing",
+					"processing_progress": 42,
+				},
+				"length": 0,
+			})
+			return &Response{Body: body, StatusCode: 200}, nil
+		},
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			t.Fatal("UploadFn must not be called when Picture is empty")
+			return nil, nil
+		},
+	}
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			t.Fatal("httpDoer must not be called when Picture is empty")
+			return nil, nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	_, err := EnsureVideoThumbnail(context.Background(), mock, "acct_1", "vid_no_pic", "")
+	if err == nil {
+		t.Fatal("expected error for video with empty picture")
+	}
+	if !strings.Contains(err.Error(), "thumbnail picture") {
+		t.Errorf("expected error to mention missing thumbnail picture, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "vid_no_pic") {
+		t.Errorf("expected error to mention the video id, got: %v", err)
+	}
+}
+
+// TestEnsureVideoThumbnail_DownloadFails covers both transport-level errors
+// and non-2xx responses from the CDN — both must be wrapped with context.
+func TestEnsureVideoThumbnail_DownloadFails(t *testing.T) {
+	videoResponseBody, _ := json.Marshal(map[string]any{
+		"id":      "vid_dl_fail",
+		"title":   "T",
+		"picture": "https://scontent.xx.fbcdn.net/v/missing.jpg",
+		"status": map[string]any{
+			"video_status":        "ready",
+			"processing_progress": 100,
+		},
+		"length": 1.0,
+	})
+	newMock := func() *MockClient {
+		return &MockClient{
+			GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
+				return &Response{Body: videoResponseBody, StatusCode: 200}, nil
+			},
+			UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+				t.Fatal("UploadFn must not be called when thumbnail download fails")
+				return nil, nil
+			},
+		}
+	}
+
+	t.Run("transport error", func(t *testing.T) {
+		fake := &fakeHTTPDoer{
+			fn: func(req *http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("connection reset by peer")
+			},
+		}
+		restore := setThumbnailHTTPClient(fake)
+		defer restore()
+
+		_, err := EnsureVideoThumbnail(context.Background(), newMock(), "123", "vid_dl_fail", "")
+		if err == nil {
+			t.Fatal("expected error on transport failure")
+		}
+		if !strings.Contains(err.Error(), "downloading video thumbnail") {
+			t.Errorf("expected error wrapped with 'downloading video thumbnail', got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "connection reset by peer") {
+			t.Errorf("expected original error to be preserved, got: %v", err)
+		}
+	})
+
+	t.Run("non-2xx status", func(t *testing.T) {
+		fake := &fakeHTTPDoer{
+			fn: func(req *http.Request) (*http.Response, error) {
+				return newFakeHTTPResponse(404, []byte("not found")), nil
+			},
+		}
+		restore := setThumbnailHTTPClient(fake)
+		defer restore()
+
+		_, err := EnsureVideoThumbnail(context.Background(), newMock(), "123", "vid_dl_fail", "")
+		if err == nil {
+			t.Fatal("expected error on non-2xx status")
+		}
+		if !strings.Contains(err.Error(), "downloading video thumbnail") {
+			t.Errorf("expected error wrapped with 'downloading video thumbnail', got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "404") {
+			t.Errorf("expected error to mention status code, got: %v", err)
+		}
+	})
+}
+
+// TestEnsureVideoThumbnail_UploadFails asserts UploadImage errors propagate
+// with wrapping context so the caller can tell which phase failed.
+func TestEnsureVideoThumbnail_UploadFails(t *testing.T) {
+	videoResponseBody, _ := json.Marshal(map[string]any{
+		"id":      "vid_up_fail",
+		"title":   "T",
+		"picture": "https://scontent.xx.fbcdn.net/v/up.jpg",
+		"status": map[string]any{
+			"video_status":        "ready",
+			"processing_progress": 100,
+		},
+		"length": 1.0,
+	})
+
+	mock := &MockClient{
+		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
+			return &Response{Body: videoResponseBody, StatusCode: 200}, nil
+		},
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			return nil, fmt.Errorf("invalid image format")
+		},
+	}
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			return newFakeHTTPResponse(200, []byte("jpeg-data")), nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	_, err := EnsureVideoThumbnail(context.Background(), mock, "123", "vid_up_fail", "")
+	if err == nil {
+		t.Fatal("expected error on upload failure")
+	}
+	if !strings.Contains(err.Error(), "uploading video thumbnail") {
+		t.Errorf("expected error wrapped with 'uploading video thumbnail', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "invalid image format") {
+		t.Errorf("expected original error preserved, got: %v", err)
 	}
 }

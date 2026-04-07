@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -41,11 +43,16 @@ func TestCreateCreative_Video(t *testing.T) {
 		GetFn: creativeGetFn(t, Creative{ID: "cr_123", Name: "Video Creative"}),
 	}
 
+	// ImageHash is provided explicitly so this test exercises the pure
+	// POST-body-shape path. The auto-thumbnail resolution path is covered
+	// by TestCreateCreative_AutoResolvesVideoThumbnail and the helper's
+	// own tests in assets_test.go.
 	params := CreateCreativeParams{
 		AccountID: "987654",
 		Name:      "Video Creative",
 		PageID:    "page_123",
 		VideoID:   "vid_456",
+		ImageHash: "explicit_thumb_hash",
 		Message:   "Check this out!",
 		Headline:  "Amazing Product",
 		CTA:       "LEARN_MORE",
@@ -510,5 +517,278 @@ func TestCreateCreative_PostErrorPropagated(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "i/o timeout") {
 		t.Errorf("expected original error in chain, got: %v", err)
+	}
+}
+
+// TestCreateCreative_AutoResolvesVideoThumbnail is the canonical regression
+// for the original bug (Meta error subcode 1443226: "Your ad needs a video
+// thumbnail"). When the caller passes a video_id but no image_hash or
+// image_url, CreateCreative must transparently fetch the video's picture,
+// upload it to /adimages, and include the resulting hash in video_data.
+func TestCreateCreative_AutoResolvesVideoThumbnail(t *testing.T) {
+	const (
+		accountID     = "987654"
+		videoID       = "vid_auto_thumb"
+		pictureURL    = "https://scontent.xx.fbcdn.net/v/auto-thumb.jpg"
+		expectHash    = "auto_thumb_hash"
+		jpegPayload   = "auto-thumb-bytes"
+		creativeID    = "cr_auto"
+		thumbFilename = "thumb_vid_auto_thumb.jpg"
+	)
+
+	var events []string
+	mock := &MockClient{
+		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
+			events = append(events, "get:"+path)
+			switch path {
+			case "/" + videoID:
+				if params.Get("fields") != videoFields {
+					t.Errorf("video GET expected fields %q, got %q", videoFields, params.Get("fields"))
+				}
+				body, _ := json.Marshal(map[string]any{
+					"id":      videoID,
+					"title":   "Auto Thumb Clip",
+					"length":  5.0,
+					"picture": pictureURL,
+					"status": map[string]any{
+						"video_status":        "ready",
+						"processing_progress": 100,
+					},
+				})
+				return &Response{Body: body, StatusCode: 200}, nil
+			case "/" + creativeID:
+				if params.Get("fields") != creativeFields {
+					t.Errorf("creative GET expected fields %q, got %q", creativeFields, params.Get("fields"))
+				}
+				body, _ := json.Marshal(Creative{ID: creativeID, Name: "Auto Video Creative"})
+				return &Response{Body: body, StatusCode: 200}, nil
+			default:
+				t.Fatalf("unexpected GET path %s", path)
+				return nil, nil
+			}
+		},
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			events = append(events, "upload:"+path)
+			wantPath := "/act_" + accountID + "/adimages"
+			if path != wantPath {
+				t.Errorf("expected Upload path %s, got %s", wantPath, path)
+			}
+			if filename != thumbFilename {
+				t.Errorf("expected filename %s, got %s", thumbFilename, filename)
+			}
+			return &Response{
+				Body:       standardImageResponse(thumbFilename, expectHash),
+				StatusCode: 200,
+			}, nil
+		},
+	}
+
+	var capturedPostBody map[string]string
+	mock.PostFn = func(ctx context.Context, path string, params map[string]string) (*Response, error) {
+		events = append(events, "post:"+path)
+		wantPath := "/act_" + accountID + "/adcreatives"
+		if path != wantPath {
+			t.Errorf("expected POST path %s, got %s", wantPath, path)
+		}
+		capturedPostBody = params
+		return &Response{Body: []byte(`{"id":"` + creativeID + `"}`), StatusCode: 200}, nil
+	}
+
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			events = append(events, "http:"+req.URL.String())
+			if req.URL.String() != pictureURL {
+				t.Errorf("expected HTTP GET %s, got %s", pictureURL, req.URL.String())
+			}
+			return newFakeHTTPResponse(200, []byte(jpegPayload)), nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	creative, err := CreateCreative(context.Background(), mock, CreateCreativeParams{
+		AccountID: accountID,
+		Name:      "Auto Video Creative",
+		PageID:    "page_99",
+		VideoID:   videoID,
+		Message:   "Try it now",
+		Headline:  "Amazing",
+		CTA:       "LEARN_MORE",
+		Link:      "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if creative.ID != creativeID {
+		t.Errorf("expected creative ID %s, got %s", creativeID, creative.ID)
+	}
+
+	// Assert the exact orchestration order: video GET, CDN download, image
+	// upload, creative POST, chained creative GET.
+	wantOrder := []string{
+		"get:/" + videoID,
+		"http:" + pictureURL,
+		"upload:/act_" + accountID + "/adimages",
+		"post:/act_" + accountID + "/adcreatives",
+		"get:/" + creativeID,
+	}
+	if len(events) != len(wantOrder) {
+		t.Fatalf("expected %d events, got %d: %v", len(wantOrder), len(events), events)
+	}
+	for i, want := range wantOrder {
+		if events[i] != want {
+			t.Errorf("event %d: expected %q, got %q", i, want, events[i])
+		}
+	}
+
+	// The creative POST body must include the auto-resolved image_hash in
+	// video_data — this is the canonical regression for the original bug.
+	ossJSON := capturedPostBody["object_story_spec"]
+	if ossJSON == "" {
+		t.Fatal("expected object_story_spec in POST body")
+	}
+	var oss map[string]any
+	if err := json.Unmarshal([]byte(ossJSON), &oss); err != nil {
+		t.Fatalf("parsing object_story_spec: %v", err)
+	}
+	videoData, ok := oss["video_data"].(map[string]any)
+	if !ok {
+		t.Fatal("expected video_data in object_story_spec")
+	}
+	if videoData["video_id"] != videoID {
+		t.Errorf("expected video_id %s, got %v", videoID, videoData["video_id"])
+	}
+	if videoData["image_hash"] != expectHash {
+		t.Errorf("expected image_hash %q, got %v", expectHash, videoData["image_hash"])
+	}
+}
+
+// TestCreateCreative_DoesNotAutoResolveWhenImageHashProvided ensures the
+// auto-resolution fast path is a strict opt-out: if the user provides
+// ImageHash explicitly, no video GET / CDN download / image upload occurs.
+func TestCreateCreative_DoesNotAutoResolveWhenImageHashProvided(t *testing.T) {
+	mock := &MockClient{
+		PostFn: func(_ context.Context, _ string, _ map[string]string) (*Response, error) {
+			return &Response{Body: []byte(`{"id":"cr_hash"}`), StatusCode: 200}, nil
+		},
+		GetFn: creativeGetFn(t, Creative{ID: "cr_hash", Name: "User Hash"}),
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			t.Fatal("UploadFn must not be called when ImageHash is supplied")
+			return nil, nil
+		},
+	}
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			t.Fatal("httpDoer must not be called when ImageHash is supplied")
+			return nil, nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	_, err := CreateCreative(context.Background(), mock, CreateCreativeParams{
+		AccountID: "1",
+		Name:      "T",
+		PageID:    "page_1",
+		VideoID:   "vid_no_fetch",
+		ImageHash: "user_hash",
+		Message:   "Msg",
+		Link:      "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.calls != 0 {
+		t.Errorf("expected zero HTTP calls, got %d", fake.calls)
+	}
+}
+
+// TestCreateCreative_DoesNotAutoResolveWhenImageURLProvided asserts the same
+// opt-out for the ImageURL path — Meta accepts either image_hash or image_url
+// inside video_data, so providing the URL must bypass the auto-resolution.
+func TestCreateCreative_DoesNotAutoResolveWhenImageURLProvided(t *testing.T) {
+	mock := &MockClient{
+		PostFn: func(_ context.Context, _ string, params map[string]string) (*Response, error) {
+			var oss map[string]any
+			if err := json.Unmarshal([]byte(params["object_story_spec"]), &oss); err != nil {
+				t.Fatalf("parsing oss: %v", err)
+			}
+			videoData := oss["video_data"].(map[string]any)
+			if videoData["image_url"] != "https://example.com/thumb.jpg" {
+				t.Errorf("expected image_url in video_data, got %v", videoData["image_url"])
+			}
+			if _, ok := videoData["image_hash"]; ok {
+				t.Error("expected no image_hash when image_url is supplied")
+			}
+			return &Response{Body: []byte(`{"id":"cr_url"}`), StatusCode: 200}, nil
+		},
+		GetFn: creativeGetFn(t, Creative{ID: "cr_url", Name: "User URL"}),
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			t.Fatal("UploadFn must not be called when ImageURL is supplied")
+			return nil, nil
+		},
+	}
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			t.Fatal("httpDoer must not be called when ImageURL is supplied")
+			return nil, nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	_, err := CreateCreative(context.Background(), mock, CreateCreativeParams{
+		AccountID: "1",
+		Name:      "T",
+		PageID:    "page_1",
+		VideoID:   "vid_url",
+		ImageURL:  "https://example.com/thumb.jpg",
+		Message:   "Msg",
+		Link:      "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.calls != 0 {
+		t.Errorf("expected zero HTTP calls, got %d", fake.calls)
+	}
+}
+
+// TestCreateCreative_NoVideoNoAuto asserts image-only creatives remain
+// unchanged: no video id means no thumbnail to resolve, regardless of whether
+// an image_hash or image_url is supplied.
+func TestCreateCreative_NoVideoNoAuto(t *testing.T) {
+	mock := &MockClient{
+		PostFn: func(_ context.Context, _ string, _ map[string]string) (*Response, error) {
+			return &Response{Body: []byte(`{"id":"cr_img_only"}`), StatusCode: 200}, nil
+		},
+		GetFn: creativeGetFn(t, Creative{ID: "cr_img_only", Name: "Image Only"}),
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			t.Fatal("UploadFn must not be called for image-only creatives")
+			return nil, nil
+		},
+	}
+	fake := &fakeHTTPDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			t.Fatal("httpDoer must not be called for image-only creatives")
+			return nil, nil
+		},
+	}
+	restore := setThumbnailHTTPClient(fake)
+	defer restore()
+
+	_, err := CreateCreative(context.Background(), mock, CreateCreativeParams{
+		AccountID: "1",
+		Name:      "Image Only",
+		PageID:    "page_1",
+		ImageHash: "existing",
+		Message:   "Msg",
+		Link:      "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fake.calls != 0 {
+		t.Errorf("expected zero HTTP calls, got %d", fake.calls)
 	}
 }
