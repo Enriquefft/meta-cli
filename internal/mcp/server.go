@@ -24,12 +24,13 @@ Typical workflow:
 2. meta_list_accounts — find the right ad account
 3. meta_list_pages — get page_id (required for creatives)
 4. meta_upload_video — upload the video asset
-5. meta_video_status — wait until encoding completes (status: "ready")
-6. meta_search_targeting — find interest/behavior IDs for audience
-7. meta_create_campaign — set objective and budget
-8. meta_create_adset — define targeting and schedule
-9. meta_create_creative — build the ad creative with video + copy + CTA
-10. meta_create_ad — link creative to ad set
+5. meta_upload_image — upload a thumbnail image (required by Meta for video creatives)
+6. meta_video_status — wait until encoding completes (status: "ready")
+7. meta_search_targeting — find interest/behavior IDs for audience
+8. meta_create_campaign — set objective and budget
+9. meta_create_adset — define targeting and schedule
+10. meta_create_creative — build the ad creative with video + image_hash + copy + CTA
+11. meta_create_ad — link creative to ad set
 
 Always create campaigns and ads as PAUSED first. Budgets are in dollars (50.00 = $50).`
 
@@ -69,6 +70,7 @@ func registerTools(s *server.MCPServer, client meta.Client) {
 	s.AddTool(listAccountsTool(), handleListAccounts(client))
 	s.AddTool(listPagesTool(), handleListPages(client))
 	s.AddTool(uploadVideoTool(), handleUploadVideo(client))
+	s.AddTool(uploadImageTool(), handleUploadImage(client))
 	s.AddTool(videoStatusTool(), handleVideoStatus(client))
 	s.AddTool(createCampaignTool(), handleCreateCampaign(client))
 	s.AddTool(createAdSetTool(), handleCreateAdSet(client))

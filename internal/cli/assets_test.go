@@ -67,6 +67,72 @@ func TestAssetsCommand_UploadVideo_MissingFile(t *testing.T) {
 	}
 }
 
+func TestAssetsCommand_UploadImage_Success(t *testing.T) {
+	dir := t.TempDir()
+	imagePath := filepath.Join(dir, "banner.jpg")
+	if err := os.WriteFile(imagePath, []byte("fake image data"), 0o644); err != nil {
+		t.Fatalf("creating temp file: %v", err)
+	}
+
+	mc := &mockClient{}
+	mc.uploadFn = func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*meta.Response, error) {
+		if path != "/act_123456/adimages" {
+			t.Errorf("expected path /act_123456/adimages, got %s", path)
+		}
+		if filename != "banner.jpg" {
+			t.Errorf("expected filename banner.jpg, got %s", filename)
+		}
+		if len(params) != 0 {
+			t.Errorf("expected no extra params, got %v", params)
+		}
+		return &meta.Response{
+			Body:       []byte(`{"images":{"banner.jpg":{"hash":"img_hash_abc","url":"https://scontent.xx.fbcdn.net/v/full.jpg","url_128":"https://scontent.xx.fbcdn.net/v/thumb.jpg","width":1200,"height":628,"name":"banner.jpg"}}}`),
+			StatusCode: 200,
+		}, nil
+	}
+
+	deps := testDeps(mc)
+	cmd := NewAssetsCommand(deps)
+	stdout, _, err := executeCommand(cmd, "upload-image", "--file", imagePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var result meta.Image
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("parsing result: %v", err)
+	}
+	if result.Hash != "img_hash_abc" {
+		t.Errorf("expected hash 'img_hash_abc', got %q", result.Hash)
+	}
+	if result.Name != "banner.jpg" {
+		t.Errorf("expected name 'banner.jpg', got %q", result.Name)
+	}
+	if result.Width != 1200 {
+		t.Errorf("expected width 1200, got %d", result.Width)
+	}
+	if result.Height != 628 {
+		t.Errorf("expected height 628, got %d", result.Height)
+	}
+}
+
+func TestAssetsCommand_UploadImage_MissingFile(t *testing.T) {
+	mc := &mockClient{}
+	deps := testDeps(mc)
+
+	var exitCode int
+	originalExit := osExit
+	osExit = func(code int) { exitCode = code }
+	defer func() { osExit = originalExit }()
+
+	cmd := NewAssetsCommand(deps)
+	_, _, _ = executeCommand(cmd, "upload-image")
+
+	if exitCode != meta.ExitValidationError {
+		t.Errorf("expected exit code %d, got %d", meta.ExitValidationError, exitCode)
+	}
+}
+
 func TestAssetsCommand_UploadVideo_Success(t *testing.T) {
 	dir := t.TempDir()
 	videoPath := filepath.Join(dir, "test.mp4")

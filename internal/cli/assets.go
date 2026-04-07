@@ -13,12 +13,13 @@ import (
 func NewAssetsCommand(deps *Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "assets",
-		Short: "Manage ad assets (videos)",
-		Long:  "Upload videos and check their encoding status.",
+		Short: "Manage ad assets (videos, images)",
+		Long:  "Upload videos or images and check video encoding status.",
 	}
 
 	cmd.AddCommand(newUploadVideoCommand(deps))
 	cmd.AddCommand(newVideoStatusCommand(deps))
+	cmd.AddCommand(newUploadImageCommand(deps))
 
 	return cmd
 }
@@ -80,6 +81,64 @@ func newUploadVideoCommand(deps *Dependencies) *cobra.Command {
 
 	cmd.Flags().StringVar(&filePath, "file", "", "Path to video file (required)")
 	cmd.Flags().StringVar(&title, "title", "", "Video title")
+
+	return cmd
+}
+
+func newUploadImageCommand(deps *Dependencies) *cobra.Command {
+	var filePath string
+
+	cmd := &cobra.Command{
+		Use:   "upload-image",
+		Short: "Upload an image to an ad account",
+		Long:  "Upload an image file to the configured ad account for use in ad creatives (including as a video thumbnail).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if filePath == "" {
+				_ = output.PrintError(cmd.ErrOrStderr(), fmt.Errorf("--file is required"))
+				osExit(meta.ExitValidationError)
+				return nil
+			}
+
+			f, err := os.Open(filePath)
+			if err != nil {
+				_ = output.PrintError(cmd.ErrOrStderr(), fmt.Errorf("opening file: %w", err))
+				osExit(meta.ExitValidationError)
+				return nil
+			}
+			defer func() { _ = f.Close() }()
+
+			fi, err := f.Stat()
+			if err != nil {
+				_ = output.PrintError(cmd.ErrOrStderr(), fmt.Errorf("stat file: %w", err))
+				osExit(meta.ExitValidationError)
+				return nil
+			}
+
+			ctx := cmd.Context()
+			accountID := AccountID(deps)
+
+			result, err := meta.UploadImage(ctx, deps.Client, meta.UploadImageParams{
+				AccountID: accountID,
+				File:      f,
+				Filename:  fi.Name(),
+				FileSize:  fi.Size(),
+			})
+			if err != nil {
+				_ = output.PrintError(cmd.ErrOrStderr(), err)
+				osExit(meta.ClassifyError(err))
+				return nil
+			}
+
+			if err := output.Print(cmd.OutOrStdout(), result, deps.Format, deps.Fields); err != nil {
+				_ = output.PrintError(cmd.ErrOrStderr(), err)
+				osExit(meta.ExitAPIError)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&filePath, "file", "", "Path to image file (required)")
 
 	return cmd
 }

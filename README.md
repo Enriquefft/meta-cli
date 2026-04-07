@@ -73,6 +73,7 @@ Add to your MCP client config (Claude Desktop, Cursor, etc.):
 | `meta_list_accounts` | List accessible ad accounts |
 | `meta_list_pages` | List managed Facebook Pages |
 | `meta_upload_video` | Upload video asset to an ad account |
+| `meta_upload_image` | Upload image asset to an ad account (also used as video thumbnail) |
 | `meta_video_status` | Check video encoding status |
 | `meta_search_targeting` | Search interests, behaviors, demographics |
 | `meta_create_campaign` | Create campaign with objective and budget |
@@ -90,6 +91,7 @@ meta auth status                Verify access token
 meta accounts list              List ad accounts
 meta pages list                 List Facebook Pages
 meta assets upload-video        Upload video for creatives
+meta assets upload-image        Upload image for creatives (used as video thumbnail)
 meta assets status <video_id>   Check video encoding status
 meta campaigns create           Create advertising campaign
 meta adsets create              Create ad set with targeting

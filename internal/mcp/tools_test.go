@@ -368,6 +368,86 @@ func TestHandleUploadVideo(t *testing.T) {
 	}
 }
 
+func TestHandleUploadImage(t *testing.T) {
+	// Create a temporary file to simulate an image upload.
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "photo.jpg")
+	imageContent := []byte("fake image bytes for testing")
+	if err := os.WriteFile(imagePath, imageContent, 0644); err != nil {
+		t.Fatalf("failed to create temp image file: %v", err)
+	}
+
+	// Verify the tool registration matches the expected MCP tool name.
+	if uploadImageTool().Name != "meta_upload_image" {
+		t.Errorf("expected tool name 'meta_upload_image', got %q", uploadImageTool().Name)
+	}
+
+	mc := &testMockClient{}
+	mc.uploadFn = func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*meta.Response, error) {
+		if path != "/act_123456/adimages" {
+			t.Errorf("expected path /act_123456/adimages, got %s", path)
+		}
+		if filename != "photo.jpg" {
+			t.Errorf("expected filename 'photo.jpg', got %q", filename)
+		}
+		if size != int64(len(imageContent)) {
+			t.Errorf("expected size %d, got %d", len(imageContent), size)
+		}
+		return &meta.Response{
+			Body:       []byte(`{"images":{"photo.jpg":{"hash":"mcp_image_hash","url":"https://scontent.xx.fbcdn.net/v/full.jpg","width":640,"height":480,"name":"photo.jpg"}}}`),
+			StatusCode: 200,
+		}, nil
+	}
+
+	handler := handleUploadImage(mc)
+	result, err := callTool(context.Background(), handler, map[string]any{
+		"account_id": "act_123456",
+		"file_path":  imagePath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %v", result.Content)
+	}
+	if len(result.Content) == 0 {
+		t.Fatal("expected content in result")
+	}
+
+	// Parse the JSON text result and assert the hash field is present.
+	text := result.Content[0].(mcplib.TextContent).Text
+	var parsed meta.Image
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse result JSON: %v", err)
+	}
+	if parsed.Hash != "mcp_image_hash" {
+		t.Errorf("expected hash 'mcp_image_hash' in result, got %q", parsed.Hash)
+	}
+	if parsed.Name != "photo.jpg" {
+		t.Errorf("expected name 'photo.jpg' in result, got %q", parsed.Name)
+	}
+}
+
+func TestHandleUploadImage_FileNotFound(t *testing.T) {
+	mc := &testMockClient{}
+	mc.uploadFn = func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*meta.Response, error) {
+		t.Fatal("uploadFn should not be called when file does not exist")
+		return nil, nil
+	}
+
+	handler := handleUploadImage(mc)
+	result, err := callTool(context.Background(), handler, map[string]any{
+		"account_id": "act_123456",
+		"file_path":  "/nonexistent/path/to/image.jpg",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error result for nonexistent file path")
+	}
+}
+
 func TestHandleUploadVideo_FileNotFound(t *testing.T) {
 	mc := &testMockClient{}
 	// uploadFn should never be called for a missing file.

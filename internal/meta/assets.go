@@ -96,6 +96,115 @@ func UploadVideo(ctx context.Context, client Client, params UploadVideoParams) (
 	return GetVideoStatus(ctx, client, VideoStatusParams{VideoID: created.ID})
 }
 
+// UploadImageParams contains parameters for uploading an image to an ad account.
+type UploadImageParams struct {
+	AccountID string
+	File      io.Reader
+	Filename  string
+	FileSize  int64
+}
+
+// Image is the canonical representation of a Meta ad image. Single source of
+// truth for the shape returned by both UploadImage and any future GetImage call.
+//
+// The Hash field is the canonical identifier consumed by ad creatives as
+// image_hash (including as the thumbnail hash for video creatives).
+type Image struct {
+	Hash   string `json:"hash"`
+	Name   string `json:"name,omitempty"`
+	URL    string `json:"url,omitempty"`
+	URL128 string `json:"url_128,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+}
+
+// uploadImageResponse is the envelope Meta returns from POST /act_{id}/adimages.
+// The response is a map keyed by the uploaded filename (minus extension in some
+// cases); it always contains exactly one entry per single-file upload.
+//
+// Meta documentation and observed response shape:
+//
+//	{
+//	  "images": {
+//	    "myphoto.jpg": {
+//	      "hash": "abc123...",
+//	      "url": "https://scontent...",
+//	      "url_128": "https://scontent...",
+//	      "width": 1200,
+//	      "height": 628,
+//	      "name": "myphoto.jpg"
+//	    }
+//	  }
+//	}
+type uploadImageResponse struct {
+	Images map[string]Image `json:"images"`
+}
+
+// UploadImage uploads an image file to the specified ad account and returns
+// the resulting Image record (including the hash, which is the canonical
+// identifier consumed by creatives as image_hash).
+//
+// Meta endpoint: POST /act_{account_id}/adimages
+// The multipart upload is delegated to the shared Client.Upload primitive.
+// The response is a map keyed by filename; this function looks up the entry
+// matching the upload's filename and falls back to the first (and only) entry
+// when Meta rewrites the key (e.g. stripping the file extension).
+func UploadImage(ctx context.Context, client Client, params UploadImageParams) (*Image, error) {
+	if params.AccountID == "" {
+		return nil, fmt.Errorf("validation: AccountID is required")
+	}
+	if params.File == nil {
+		return nil, fmt.Errorf("validation: File is required")
+	}
+	if params.Filename == "" {
+		return nil, fmt.Errorf("validation: Filename is required")
+	}
+	if params.FileSize <= 0 {
+		return nil, fmt.Errorf("validation: FileSize must be greater than zero")
+	}
+
+	accountID := normalizeAccountID(params.AccountID)
+	path := fmt.Sprintf("/act_%s/adimages", accountID)
+
+	resp, err := client.Upload(ctx, path, params.File, params.Filename, params.FileSize, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var decoded uploadImageResponse
+	if err := json.Unmarshal(resp.Body, &decoded); err != nil {
+		return nil, fmt.Errorf("parsing upload response: %w", err)
+	}
+	if len(decoded.Images) == 0 {
+		return nil, fmt.Errorf("upload response contained no images")
+	}
+
+	img, ok := decoded.Images[params.Filename]
+	if !ok {
+		// Meta may rewrite the key (e.g. strip the extension); there is always
+		// exactly one entry for a single-file upload, so fall back to it and
+		// report which keys were present if we somehow end up with zero.
+		for _, v := range decoded.Images {
+			img = v
+			ok = true
+			break
+		}
+		if !ok {
+			keys := make([]string, 0, len(decoded.Images))
+			for k := range decoded.Images {
+				keys = append(keys, k)
+			}
+			return nil, fmt.Errorf("upload response missing image entry for %q (got keys: %v)", params.Filename, keys)
+		}
+	}
+
+	if img.Name == "" {
+		img.Name = params.Filename
+	}
+
+	return &img, nil
+}
+
 // GetVideoStatus fetches the current metadata and encoding status of a video.
 func GetVideoStatus(ctx context.Context, client Client, params VideoStatusParams) (*Video, error) {
 	if params.VideoID == "" {

@@ -60,6 +60,20 @@ func uploadVideoTool() mcplib.Tool {
 	)
 }
 
+func uploadImageTool() mcplib.Tool {
+	return mcplib.NewTool("meta_upload_image",
+		mcplib.WithDescription("Upload an image file to an ad account for use in ad creatives (including as a video creative thumbnail)."),
+		mcplib.WithString("account_id",
+			mcplib.Description("The ad account ID"),
+			mcplib.Required(),
+		),
+		mcplib.WithString("file_path",
+			mcplib.Description("Local file path to the image file"),
+			mcplib.Required(),
+		),
+	)
+}
+
 func videoStatusTool() mcplib.Tool {
 	return mcplib.NewTool("meta_video_status",
 		mcplib.WithDescription("Check the encoding status of an uploaded video. Wait until status is 'ready' before using in creatives."),
@@ -362,6 +376,41 @@ func handleUploadVideo(client meta.Client) toolHandler {
 			Filename:  fi.Name(),
 			FileSize:  fi.Size(),
 			Title:     title,
+		})
+		if err != nil {
+			return mcplib.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(result)
+	}
+}
+
+func handleUploadImage(client meta.Client) toolHandler {
+	return func(ctx context.Context, request mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+		accountID, err := request.RequireString("account_id")
+		if err != nil {
+			return mcplib.NewToolResultError(err.Error()), nil
+		}
+		filePath, err := request.RequireString("file_path")
+		if err != nil {
+			return mcplib.NewToolResultError(err.Error()), nil
+		}
+
+		f, err := os.Open(filePath)
+		if err != nil {
+			return mcplib.NewToolResultError(fmt.Sprintf("failed to open file: %v", err)), nil
+		}
+		defer func() { _ = f.Close() }()
+
+		fi, err := f.Stat()
+		if err != nil {
+			return mcplib.NewToolResultError(fmt.Sprintf("failed to stat file: %v", err)), nil
+		}
+
+		result, err := meta.UploadImage(ctx, client, meta.UploadImageParams{
+			AccountID: accountID,
+			File:      f,
+			Filename:  fi.Name(),
+			FileSize:  fi.Size(),
 		})
 		if err != nil {
 			return mcplib.NewToolResultError(err.Error()), nil
