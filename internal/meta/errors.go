@@ -6,15 +6,25 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"strings"
 )
 
+// GraphError is the decoded representation of a Meta Graph API error response.
+//
+// Meta includes two developer-facing fields on error responses — error_user_title
+// and error_user_msg — that describe exactly what is wrong and how to fix it.
+// They are the difference between a generic "Invalid parameter" and an actionable
+// diagnostic, so they are surfaced on this struct (and in the Error() string)
+// rather than being dropped.
 type GraphError struct {
 	Message     string `json:"message"`
 	Type        string `json:"type"`
 	Code        int    `json:"code"`
 	Subcode     int    `json:"error_subcode"`
 	TraceID     string `json:"fbtrace_id"`
-	IsRetryable bool
+	UserTitle   string `json:"error_user_title,omitempty"`
+	UserMessage string `json:"error_user_msg,omitempty"`
+	IsRetryable bool   `json:"-"`
 }
 
 const (
@@ -26,8 +36,40 @@ const (
 	ExitNetworkError    = 5
 )
 
+// Error renders the error as a scannable single line. When Meta provides the
+// developer-facing UserTitle/UserMessage fields they are included, because they
+// are typically the most actionable part of the payload.
 func (e *GraphError) Error() string {
-	return fmt.Sprintf("meta api error: %s (code=%d, subcode=%d)", e.Message, e.Code, e.Subcode)
+	var b strings.Builder
+	b.WriteString("meta api error: ")
+	b.WriteString(e.Message)
+
+	if detail := e.userDetail(); detail != "" {
+		b.WriteString(" — ")
+		b.WriteString(detail)
+	}
+
+	fmt.Fprintf(&b, " (code=%d, subcode=%d", e.Code, e.Subcode)
+	if e.TraceID != "" {
+		fmt.Fprintf(&b, ", trace=%s", e.TraceID)
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
+// userDetail joins UserTitle and UserMessage into a single human-readable
+// fragment. Either, both, or neither may be present.
+func (e *GraphError) userDetail() string {
+	switch {
+	case e.UserTitle != "" && e.UserMessage != "":
+		return e.UserTitle + ": " + e.UserMessage
+	case e.UserTitle != "":
+		return e.UserTitle
+	case e.UserMessage != "":
+		return e.UserMessage
+	default:
+		return ""
+	}
 }
 
 func ParseGraphError(body []byte) *GraphError {

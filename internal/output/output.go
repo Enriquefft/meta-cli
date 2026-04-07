@@ -33,19 +33,34 @@ func Print(w io.Writer, data any, format string, fields string) error {
 }
 
 // PrintError writes a structured JSON error to the given writer.
-// For *meta.GraphError: includes message, code, subcode, and trace_id.
+//
+// For *meta.GraphError: includes message, code, subcode, trace_id, and — when
+// Meta provided them — user_title and user_message (surfaced from
+// error_user_title / error_user_msg). These are the developer-facing
+// explanations Meta writes to describe what went wrong and how to fix it,
+// so they are rendered as first-class fields on our error shape.
+//
 // For other errors: includes message only.
+//
+// The new user_title / user_message keys are additive and omitted when empty,
+// so existing consumers that only read message/code/subcode/trace_id see no
+// shape change.
 func PrintError(w io.Writer, err error) error {
 	var ge *meta.GraphError
 	if errors.As(err, &ge) {
-		return writeJSON(w, map[string]any{
-			"error": map[string]any{
-				"message":  ge.Message,
-				"code":     ge.Code,
-				"subcode":  ge.Subcode,
-				"trace_id": ge.TraceID,
-			},
-		})
+		errObj := map[string]any{
+			"message":  ge.Message,
+			"code":     ge.Code,
+			"subcode":  ge.Subcode,
+			"trace_id": ge.TraceID,
+		}
+		if ge.UserTitle != "" {
+			errObj["user_title"] = ge.UserTitle
+		}
+		if ge.UserMessage != "" {
+			errObj["user_message"] = ge.UserMessage
+		}
+		return writeJSON(w, map[string]any{"error": errObj})
 	}
 
 	return writeJSON(w, map[string]any{

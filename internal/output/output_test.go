@@ -451,6 +451,77 @@ func TestPrintError_PlainError(t *testing.T) {
 	}
 }
 
+func TestPrintError_GraphError_WithUserFields(t *testing.T) {
+	var buf bytes.Buffer
+	graphErr := &meta.GraphError{
+		Message:     "Invalid parameter",
+		Code:        100,
+		Subcode:     1443226,
+		TraceID:     "A_4_hqeC6Ihn23dP1sxHqfg",
+		UserTitle:   "Your ad needs a video thumbnail",
+		UserMessage: "Please specify one of image_hash or image_url in the video_data field of object_story_spec.",
+	}
+
+	if err := PrintError(&buf, graphErr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+
+	errObj, ok := got["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'error' key with object value, got: %v", got)
+	}
+
+	if errObj["user_title"] != "Your ad needs a video thumbnail" {
+		t.Errorf("expected user_title to be surfaced, got %v", errObj["user_title"])
+	}
+	const wantUserMsg = "Please specify one of image_hash or image_url in the video_data field of object_story_spec."
+	if errObj["user_message"] != wantUserMsg {
+		t.Errorf("expected user_message=%q, got %v", wantUserMsg, errObj["user_message"])
+	}
+	// Existing fields must still be present (backward compatibility).
+	if errObj["code"] != float64(100) {
+		t.Errorf("expected code=100, got %v", errObj["code"])
+	}
+	if errObj["subcode"] != float64(1443226) {
+		t.Errorf("expected subcode=1443226, got %v", errObj["subcode"])
+	}
+	if errObj["trace_id"] != "A_4_hqeC6Ihn23dP1sxHqfg" {
+		t.Errorf("expected trace_id preserved, got %v", errObj["trace_id"])
+	}
+}
+
+func TestPrintError_GraphError_OmitsEmptyUserFields(t *testing.T) {
+	var buf bytes.Buffer
+	graphErr := &meta.GraphError{
+		Message: "Invalid token",
+		Code:    190,
+		Subcode: 467,
+		TraceID: "trace",
+	}
+
+	if err := PrintError(&buf, graphErr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	errObj := got["error"].(map[string]any)
+	if _, ok := errObj["user_title"]; ok {
+		t.Error("expected user_title to be absent when empty")
+	}
+	if _, ok := errObj["user_message"]; ok {
+		t.Error("expected user_message to be absent when empty")
+	}
+}
+
 func TestPrintError_WrappedGraphError(t *testing.T) {
 	var buf bytes.Buffer
 	graphErr := &meta.GraphError{

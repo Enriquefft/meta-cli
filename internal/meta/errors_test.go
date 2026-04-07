@@ -3,6 +3,7 @@ package meta
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -184,5 +185,106 @@ func TestGraphError_Error(t *testing.T) {
 	s := ge.Error()
 	if s == "" {
 		t.Error("Error() should not be empty")
+	}
+}
+
+func TestParseGraphError_UserTitleAndMessage(t *testing.T) {
+	body := []byte(`{"error":{"message":"Invalid parameter","type":"OAuthException","code":100,"error_subcode":1443226,"error_user_title":"Your ad needs a video thumbnail","error_user_msg":"Please specify one of image_hash or image_url in the video_data field of object_story_spec.","fbtrace_id":"A_4_hqeC6Ihn23dP1sxHqfg"}}`)
+
+	ge := ParseGraphError(body)
+	if ge == nil {
+		t.Fatal("expected GraphError, got nil")
+	}
+	if ge.Message != "Invalid parameter" {
+		t.Errorf("expected message 'Invalid parameter', got %q", ge.Message)
+	}
+	if ge.Code != 100 {
+		t.Errorf("expected code 100, got %d", ge.Code)
+	}
+	if ge.Subcode != 1443226 {
+		t.Errorf("expected subcode 1443226, got %d", ge.Subcode)
+	}
+	if ge.UserTitle != "Your ad needs a video thumbnail" {
+		t.Errorf("expected UserTitle populated, got %q", ge.UserTitle)
+	}
+	const wantMsg = "Please specify one of image_hash or image_url in the video_data field of object_story_spec."
+	if ge.UserMessage != wantMsg {
+		t.Errorf("expected UserMessage %q, got %q", wantMsg, ge.UserMessage)
+	}
+	if ge.TraceID != "A_4_hqeC6Ihn23dP1sxHqfg" {
+		t.Errorf("expected trace id preserved, got %q", ge.TraceID)
+	}
+}
+
+func TestParseGraphError_NoUserFields(t *testing.T) {
+	body := []byte(`{"error":{"message":"Invalid token","type":"OAuthException","code":190,"error_subcode":467,"fbtrace_id":"abc"}}`)
+	ge := ParseGraphError(body)
+	if ge == nil {
+		t.Fatal("expected GraphError, got nil")
+	}
+	if ge.UserTitle != "" {
+		t.Errorf("expected empty UserTitle, got %q", ge.UserTitle)
+	}
+	if ge.UserMessage != "" {
+		t.Errorf("expected empty UserMessage, got %q", ge.UserMessage)
+	}
+}
+
+func TestGraphError_ErrorString_IncludesUserFields(t *testing.T) {
+	ge := &GraphError{
+		Message:     "Invalid parameter",
+		Code:        100,
+		Subcode:     1443226,
+		TraceID:     "trace-xyz",
+		UserTitle:   "Your ad needs a video thumbnail",
+		UserMessage: "Please specify one of image_hash or image_url.",
+	}
+	s := ge.Error()
+
+	if !strings.Contains(s, "Your ad needs a video thumbnail") {
+		t.Errorf("Error() should include UserTitle; got %q", s)
+	}
+	if !strings.Contains(s, "Please specify one of image_hash or image_url.") {
+		t.Errorf("Error() should include UserMessage; got %q", s)
+	}
+	if !strings.Contains(s, "code=100") {
+		t.Errorf("Error() should include code; got %q", s)
+	}
+	if !strings.Contains(s, "subcode=1443226") {
+		t.Errorf("Error() should include subcode; got %q", s)
+	}
+	if !strings.Contains(s, "trace=trace-xyz") {
+		t.Errorf("Error() should include trace id; got %q", s)
+	}
+}
+
+func TestGraphError_ErrorString_OmitsSeparatorWhenNoUserFields(t *testing.T) {
+	ge := &GraphError{Message: "Invalid token", Code: 190, Subcode: 467}
+	s := ge.Error()
+
+	if strings.Contains(s, " — ") {
+		t.Errorf("Error() should not include the em-dash separator when user fields are empty; got %q", s)
+	}
+	if !strings.Contains(s, "Invalid token") {
+		t.Errorf("Error() should include message; got %q", s)
+	}
+	if !strings.Contains(s, "code=190") {
+		t.Errorf("Error() should include code; got %q", s)
+	}
+}
+
+func TestGraphError_ErrorString_UserTitleOnly(t *testing.T) {
+	ge := &GraphError{Message: "Invalid parameter", Code: 100, UserTitle: "Bad thumbnail"}
+	s := ge.Error()
+	if !strings.Contains(s, "Bad thumbnail") {
+		t.Errorf("Error() should include UserTitle alone; got %q", s)
+	}
+}
+
+func TestGraphError_ErrorString_UserMessageOnly(t *testing.T) {
+	ge := &GraphError{Message: "Invalid parameter", Code: 100, UserMessage: "Specify image_hash."}
+	s := ge.Error()
+	if !strings.Contains(s, "Specify image_hash.") {
+		t.Errorf("Error() should include UserMessage alone; got %q", s)
 	}
 }
