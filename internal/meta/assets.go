@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// videoFields is the canonical set of fields requested from the Graph API
+// for a video resource. Both UploadVideo and GetVideoStatus use it so that
+// the two flows return identical shapes.
+const videoFields = "id,title,status,length"
+
 // UploadVideoParams contains the parameters for uploading a video to an ad account.
 type UploadVideoParams struct {
 	AccountID string
@@ -18,20 +23,15 @@ type UploadVideoParams struct {
 	Title     string
 }
 
-// UploadVideoResult contains the response from a video upload operation.
-type UploadVideoResult struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
-	UploadStatus string `json:"upload_status"`
-}
-
 // VideoStatusParams contains the parameters for checking video encoding status.
 type VideoStatusParams struct {
 	VideoID string
 }
 
-// VideoStatusResult contains the response from a video status check.
-type VideoStatusResult struct {
+// Video is the canonical representation of a Meta video resource, shared by
+// UploadVideo and GetVideoStatus. It is the single source of truth for the
+// shape of a video returned to callers.
+type Video struct {
 	ID     string      `json:"id"`
 	Title  string      `json:"title"`
 	Status VideoStatus `json:"status"`
@@ -44,13 +44,24 @@ type VideoStatus struct {
 	ProcessingProgress int    `json:"processing_progress"`
 }
 
+// uploadResponse is the thin envelope Meta returns from the POST /advideos
+// endpoint (and from the resumable finish phase). It only carries the new
+// video's ID; full metadata must be fetched separately.
+type uploadResponse struct {
+	ID string `json:"id"`
+}
+
 // normalizeAccountID strips an optional "act_" prefix and returns the numeric ID.
 func normalizeAccountID(id string) string {
 	return strings.TrimPrefix(id, "act_")
 }
 
-// UploadVideo uploads a video file to the specified ad account.
-func UploadVideo(ctx context.Context, client Client, params UploadVideoParams) (*UploadVideoResult, error) {
+// UploadVideo uploads a video file to the specified ad account and returns
+// the full video record (id, title, status, length). Because Meta's upload
+// endpoint only returns the new video's id, this function issues a follow-up
+// GET against the same path used by GetVideoStatus so callers always receive
+// a fully populated Video regardless of which code path produced it.
+func UploadVideo(ctx context.Context, client Client, params UploadVideoParams) (*Video, error) {
 	if params.AccountID == "" {
 		return nil, fmt.Errorf("validation: AccountID is required")
 	}
@@ -74,32 +85,35 @@ func UploadVideo(ctx context.Context, client Client, params UploadVideoParams) (
 		return nil, err
 	}
 
-	var result UploadVideoResult
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+	var created uploadResponse
+	if err := json.Unmarshal(resp.Body, &created); err != nil {
 		return nil, fmt.Errorf("parsing upload response: %w", err)
 	}
+	if created.ID == "" {
+		return nil, fmt.Errorf("upload response missing video id")
+	}
 
-	return &result, nil
+	return GetVideoStatus(ctx, client, VideoStatusParams{VideoID: created.ID})
 }
 
-// GetVideoStatus checks the encoding status of a previously uploaded video.
-func GetVideoStatus(ctx context.Context, client Client, params VideoStatusParams) (*VideoStatusResult, error) {
+// GetVideoStatus fetches the current metadata and encoding status of a video.
+func GetVideoStatus(ctx context.Context, client Client, params VideoStatusParams) (*Video, error) {
 	if params.VideoID == "" {
 		return nil, fmt.Errorf("validation: VideoID is required")
 	}
 
 	path := fmt.Sprintf("/%s", params.VideoID)
 	queryParams := url.Values{}
-	queryParams.Set("fields", "id,title,status,length")
+	queryParams.Set("fields", videoFields)
 
 	resp, err := client.Get(ctx, path, queryParams)
 	if err != nil {
 		return nil, err
 	}
 
-	var result VideoStatusResult
+	var result Video
 	if err := json.Unmarshal(resp.Body, &result); err != nil {
-		return nil, fmt.Errorf("parsing video status response: %w", err)
+		return nil, fmt.Errorf("parsing video response: %w", err)
 	}
 
 	return &result, nil

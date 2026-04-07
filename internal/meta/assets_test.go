@@ -10,6 +10,32 @@ import (
 	"testing"
 )
 
+// videoGetFn returns a GetFn suitable for the MockClient that answers the
+// follow-up GET issued by UploadVideo after the upload completes. The returned
+// body mirrors the shape the real Graph API sends for fields=id,title,status,length.
+func videoGetFn(t *testing.T, videoID, title, status string, progress int, length float64) func(ctx context.Context, path string, params url.Values) (*Response, error) {
+	t.Helper()
+	return func(ctx context.Context, path string, params url.Values) (*Response, error) {
+		expectedPath := "/" + videoID
+		if path != expectedPath {
+			t.Errorf("expected GET path %s, got %s", expectedPath, path)
+		}
+		if params.Get("fields") != "id,title,status,length" {
+			t.Errorf("expected fields id,title,status,length, got %s", params.Get("fields"))
+		}
+		body, _ := json.Marshal(map[string]any{
+			"id":    videoID,
+			"title": title,
+			"status": map[string]any{
+				"video_status":        status,
+				"processing_progress": progress,
+			},
+			"length": length,
+		})
+		return &Response{Body: body, StatusCode: 200}, nil
+	}
+}
+
 func TestUploadVideo_Success(t *testing.T) {
 	mock := &MockClient{
 		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
@@ -25,9 +51,10 @@ func TestUploadVideo_Success(t *testing.T) {
 			if params["title"] != "My Video" {
 				t.Errorf("expected title 'My Video', got %s", params["title"])
 			}
-			body := `{"id":"99887766","title":"product.mp4","upload_status":"processing"}`
-			return &Response{Body: []byte(body), StatusCode: 200}, nil
+			// Meta's /advideos endpoint only returns the new video's id.
+			return &Response{Body: []byte(`{"id":"99887766"}`), StatusCode: 200}, nil
 		},
+		GetFn: videoGetFn(t, "99887766", "My Video", "processing", 0, 12.5),
 	}
 
 	result, err := UploadVideo(context.Background(), mock, UploadVideoParams{
@@ -43,11 +70,57 @@ func TestUploadVideo_Success(t *testing.T) {
 	if result.ID != "99887766" {
 		t.Errorf("expected ID 99887766, got %s", result.ID)
 	}
-	if result.Title != "product.mp4" {
-		t.Errorf("expected Title product.mp4, got %s", result.Title)
+	if result.Title != "My Video" {
+		t.Errorf("expected Title 'My Video', got %s", result.Title)
 	}
-	if result.UploadStatus != "processing" {
-		t.Errorf("expected UploadStatus processing, got %s", result.UploadStatus)
+	if result.Status.VideoStatus != "processing" {
+		t.Errorf("expected Status.VideoStatus processing, got %s", result.Status.VideoStatus)
+	}
+	if result.Length != 12.5 {
+		t.Errorf("expected Length 12.5, got %f", result.Length)
+	}
+}
+
+func TestUploadVideo_FetchesFullRecordAfterUpload(t *testing.T) {
+	// Regression: Meta's POST /advideos returns only {"id": ...}. UploadVideo
+	// must issue a follow-up GET so callers get the full Video record, not an
+	// object with empty title/status/length fields.
+	var getCalled bool
+	mock := &MockClient{
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			return &Response{Body: []byte(`{"id":"vid_abc"}`), StatusCode: 200}, nil
+		},
+		GetFn: func(ctx context.Context, path string, params url.Values) (*Response, error) {
+			getCalled = true
+			if path != "/vid_abc" {
+				t.Errorf("expected GET path /vid_abc, got %s", path)
+			}
+			body := `{"id":"vid_abc","title":"Follow-up Title","status":{"video_status":"processing","processing_progress":0},"length":115.066}`
+			return &Response{Body: []byte(body), StatusCode: 200}, nil
+		},
+	}
+
+	result, err := UploadVideo(context.Background(), mock, UploadVideoParams{
+		AccountID: "123",
+		File:      strings.NewReader("data"),
+		Filename:  "clip.mp4",
+		FileSize:  4,
+		Title:     "Follow-up Title",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !getCalled {
+		t.Fatal("expected UploadVideo to issue a follow-up GET for full metadata")
+	}
+	if result.Title != "Follow-up Title" {
+		t.Errorf("expected Title 'Follow-up Title', got %q", result.Title)
+	}
+	if result.Status.VideoStatus != "processing" {
+		t.Errorf("expected Status.VideoStatus processing, got %q", result.Status.VideoStatus)
+	}
+	if result.Length != 115.066 {
+		t.Errorf("expected Length 115.066, got %f", result.Length)
 	}
 }
 
@@ -63,11 +136,9 @@ func TestUploadVideo_CorrectPathAndParams(t *testing.T) {
 			capturedParams = params
 			capturedFilename = filename
 			capturedSize = size
-			return &Response{
-				Body:       []byte(`{"id":"1","title":"vid.mp4","upload_status":"processing"}`),
-				StatusCode: 200,
-			}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: videoGetFn(t, "1", "Test Title", "processing", 0, 0),
 	}
 
 	_, err := UploadVideo(context.Background(), mock, UploadVideoParams{
@@ -101,11 +172,9 @@ func TestUploadVideo_NoTitle(t *testing.T) {
 	mock := &MockClient{
 		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
 			capturedParams = params
-			return &Response{
-				Body:       []byte(`{"id":"1","title":"vid.mp4","upload_status":"processing"}`),
-				StatusCode: 200,
-			}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: videoGetFn(t, "1", "", "processing", 0, 0),
 	}
 
 	_, err := UploadVideo(context.Background(), mock, UploadVideoParams{
@@ -129,11 +198,9 @@ func TestUploadVideo_NormalizesAccountID(t *testing.T) {
 	mock := &MockClient{
 		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
 			capturedPath = path
-			return &Response{
-				Body:       []byte(`{"id":"1","title":"v.mp4","upload_status":"processing"}`),
-				StatusCode: 200,
-			}, nil
+			return &Response{Body: []byte(`{"id":"1"}`), StatusCode: 200}, nil
 		},
+		GetFn: videoGetFn(t, "1", "v.mp4", "processing", 0, 0),
 	}
 
 	// User includes "act_" prefix — should be normalized
@@ -218,6 +285,27 @@ func TestUploadVideo_ClientError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "connection reset") {
 		t.Errorf("expected original error to be propagated, got: %v", err)
+	}
+}
+
+func TestUploadVideo_MissingIDInUploadResponse(t *testing.T) {
+	mock := &MockClient{
+		UploadFn: func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*Response, error) {
+			return &Response{Body: []byte(`{}`), StatusCode: 200}, nil
+		},
+	}
+
+	_, err := UploadVideo(context.Background(), mock, UploadVideoParams{
+		AccountID: "123",
+		File:      strings.NewReader("data"),
+		Filename:  "v.mp4",
+		FileSize:  100,
+	})
+	if err == nil {
+		t.Fatal("expected error when upload response omits id")
+	}
+	if !strings.Contains(err.Error(), "video id") {
+		t.Errorf("expected error to mention missing video id, got: %v", err)
 	}
 }
 

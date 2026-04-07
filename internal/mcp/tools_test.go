@@ -323,8 +323,19 @@ func TestHandleUploadVideo(t *testing.T) {
 		if size != int64(len(videoContent)) {
 			t.Errorf("expected size %d, got %d", len(videoContent), size)
 		}
+		// Meta's /advideos endpoint only returns the new video's id.
 		return &meta.Response{
-			Body:       []byte(`{"id":"vid_789","title":"test_video.mp4","upload_status":"complete"}`),
+			Body:       []byte(`{"id":"vid_789"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	// UploadVideo chains a follow-up GET to return the full video record.
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
+		if path != "/vid_789" {
+			t.Errorf("expected follow-up GET path /vid_789, got %s", path)
+		}
+		return &meta.Response{
+			Body:       []byte(`{"id":"vid_789","title":"Test Video","status":{"video_status":"processing","processing_progress":0},"length":8.25}`),
 			StatusCode: 200,
 		}, nil
 	}

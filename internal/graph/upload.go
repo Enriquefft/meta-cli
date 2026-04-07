@@ -322,10 +322,13 @@ func (c *Client) resumableUpload(ctx context.Context, path string, file io.Reade
 		return nil, err
 	}
 
-	resultBody, _ := json.Marshal(map[string]string{
-		"id":            fin.VideoID,
-		"upload_status": "processing",
-	})
+	// Normalize the resumable finish envelope (which uses video_id) to the
+	// same {"id": "..."} shape returned by the simple /advideos upload so the
+	// meta layer can decode either response uniformly.
+	resultBody, err := json.Marshal(map[string]string{"id": fin.VideoID})
+	if err != nil {
+		return nil, fmt.Errorf("encoding resumable upload result: %w", err)
+	}
 
 	return &meta.Response{
 		Body:       resultBody,

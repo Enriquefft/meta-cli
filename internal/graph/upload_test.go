@@ -247,14 +247,18 @@ func TestResumableUpload_FinishIncludesVideoID(t *testing.T) {
 		t.Fatalf("upload failed: %v", err)
 	}
 
+	// The resumable upload transport normalizes the finish envelope to the
+	// same {"id": "..."} shape returned by the simple upload path. The
+	// meta.UploadVideo domain function is responsible for fetching the full
+	// video record; the transport only reports the new video id.
 	var result map[string]string
 	if err := json.Unmarshal(resp.Body, &result); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if result["id"] == "" {
-		t.Error("expected non-empty video id in finish response")
+	if result["id"] != "vid_resumable_123" {
+		t.Errorf("expected id 'vid_resumable_123', got %q", result["id"])
 	}
-	if result["upload_status"] != "processing" {
-		t.Errorf("expected upload_status 'processing', got %s", result["upload_status"])
+	if _, ok := result["upload_status"]; ok {
+		t.Error("transport must not fabricate upload_status; domain layer owns the full video shape")
 	}
 }

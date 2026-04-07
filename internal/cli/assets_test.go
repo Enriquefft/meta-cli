@@ -28,7 +28,7 @@ func TestAssetsCommand_VideoStatus(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var result meta.VideoStatusResult
+	var result meta.Video
 	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 		t.Fatalf("parsing result: %v", err)
 	}
@@ -76,8 +76,16 @@ func TestAssetsCommand_UploadVideo_Success(t *testing.T) {
 
 	mc := &mockClient{}
 	mc.uploadFn = func(ctx context.Context, path string, file io.Reader, filename string, size int64, params map[string]string) (*meta.Response, error) {
+		// Meta's /advideos POST returns only {"id": ...}.
 		return &meta.Response{
-			Body:       []byte(`{"id":"vid_new","title":"test","upload_status":"processing"}`),
+			Body:       []byte(`{"id":"vid_new"}`),
+			StatusCode: 200,
+		}, nil
+	}
+	// UploadVideo must chain a GET to return the full video record.
+	mc.getFn = func(ctx context.Context, path string, params url.Values) (*meta.Response, error) {
+		return &meta.Response{
+			Body:       []byte(`{"id":"vid_new","title":"Test Upload","status":{"video_status":"processing","processing_progress":0},"length":12.5}`),
 			StatusCode: 200,
 		}, nil
 	}
@@ -89,11 +97,20 @@ func TestAssetsCommand_UploadVideo_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var result meta.UploadVideoResult
+	var result meta.Video
 	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 		t.Fatalf("parsing result: %v", err)
 	}
 	if result.ID != "vid_new" {
 		t.Errorf("expected video ID 'vid_new', got %q", result.ID)
+	}
+	if result.Title != "Test Upload" {
+		t.Errorf("expected title 'Test Upload', got %q", result.Title)
+	}
+	if result.Status.VideoStatus != "processing" {
+		t.Errorf("expected status 'processing', got %q", result.Status.VideoStatus)
+	}
+	if result.Length != 12.5 {
+		t.Errorf("expected length 12.5, got %f", result.Length)
 	}
 }
